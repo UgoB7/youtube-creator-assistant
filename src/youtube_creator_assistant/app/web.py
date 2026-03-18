@@ -39,7 +39,7 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload an image, generate title candidates, choose one title, then build the package.</p>
+      <p class="muted">Upload an image, generate title candidates, choose up to 3 titles, then build the package.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -80,11 +80,11 @@ PAGE = """<!doctype html>
 
           {% if project.title_candidates %}
             <form method="post" action="{{ url_for('build_package_route', project_id=project.project_id) }}" style="margin-top: 16px;">
-              <h3>Choose a title</h3>
+              <h3>Choose up to 3 titles</h3>
               {% for title in project.title_candidates %}
                 <div>
                   <label>
-                    <input type="radio" name="title" value="{{ title }}" {% if loop.first %}checked{% endif %}>
+                    <input type="checkbox" name="titles" value="{{ title }}" {% if project.selected_titles and title in project.selected_titles %}checked{% elif not project.selected_titles and loop.index <= 3 %}checked{% endif %}>
                     {{ title }}
                   </label>
                 </div>
@@ -99,7 +99,15 @@ PAGE = """<!doctype html>
     {% if project and project.status == "package_built" %}
       <div class="card">
         <h2>Outputs</h2>
-        <p><strong>Selected title</strong>: {{ project.selected_title }}</p>
+        <p><strong>Primary title</strong>: {{ project.selected_title }}</p>
+        {% if project.selected_titles %}
+          <p><strong>Selected titles</strong></p>
+          <ul>
+            {% for title in project.selected_titles %}
+              <li>{{ title }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
         <p><strong>Themes</strong></p>
         <ul>
           {% for theme in project.themes %}
@@ -112,6 +120,7 @@ PAGE = """<!doctype html>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='yt_video_description.txt') }}">yt_video_description.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='themes.txt') }}">themes.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='audio_selection.txt') }}">audio_selection.txt</a></li>
+          <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='selected_titles.txt') }}">selected_titles.txt</a></li>
           {% if project.yt_thumbnail_path %}
             <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='artifacts/' + project.yt_thumbnail_path.name) }}">thumbnail</a></li>
           {% endif %}
@@ -216,11 +225,14 @@ def create_app(config_path: Path) -> Flask:
 
     @app.post("/projects/<project_id>/build")
     def build_package_route(project_id: str):
-        title = (request.form.get("title") or "").strip()
-        if not title:
-            flash("Please choose a title.")
+        titles = [title.strip() for title in request.form.getlist("titles") if title.strip()]
+        if not titles:
+            flash("Please choose at least one title.")
             return redirect(url_for("index", project_id=project_id))
-        pipeline.build_package(project_id, title)
+        if len(titles) > ContentPipeline.MAX_SELECTED_TITLES:
+            flash(f"Please choose at most {ContentPipeline.MAX_SELECTED_TITLES} titles.")
+            return redirect(url_for("index", project_id=project_id))
+        pipeline.build_package(project_id, titles)
         return redirect(url_for("index", project_id=project_id))
 
     @app.get("/projects/<project_id>/files/<path:relpath>")

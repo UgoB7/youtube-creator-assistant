@@ -71,6 +71,7 @@ class VideoProject:
     created_at: str
     status: str = "created"
     title_candidates: List[str] = field(default_factory=list)
+    selected_titles: List[str] = field(default_factory=list)
     selected_title: Optional[str] = None
     preferred_references: List[str] = field(default_factory=list)
     themes: List[str] = field(default_factory=list)
@@ -98,6 +99,7 @@ class VideoProject:
             created_at=str(data["created_at"]),
             status=str(data.get("status", "created")),
             title_candidates=list(data.get("title_candidates", [])),
+            selected_titles=list(data.get("selected_titles", [])),
             selected_title=data.get("selected_title"),
             preferred_references=list(data.get("preferred_references", [])),
             themes=list(data.get("themes", [])),

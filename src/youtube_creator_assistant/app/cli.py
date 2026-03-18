@@ -22,12 +22,12 @@ def main() -> None:
     build_parser = subparsers.add_parser("build-package", help="Build audio, themes, description, and thumbnail.")
     build_parser.add_argument("--config", type=Path, required=True)
     build_parser.add_argument("--project-id", required=True)
-    build_parser.add_argument("--title", required=True)
+    build_parser.add_argument("--title", action="append", required=True)
 
     run_parser = subparsers.add_parser("run", help="Convenience flow: create project and generate titles.")
     run_parser.add_argument("--config", type=Path, required=True)
     run_parser.add_argument("--visual", type=Path, required=True)
-    run_parser.add_argument("--title", default="")
+    run_parser.add_argument("--title", action="append")
 
     args = parser.parse_args()
     settings = load_settings(args.config)
@@ -57,7 +57,7 @@ def main() -> None:
         print(project.project_id)
         for idx, title in enumerate(project.title_candidates, start=1):
             print(f"{idx:02d}. {title}")
-        if args.title.strip():
+        if args.title:
             project = pipeline.build_package(project.project_id, args.title)
             print(project.project_dir)
         return

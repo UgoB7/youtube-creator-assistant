@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Iterable
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.runtime import RuntimeManager
+from youtube_creator_assistant.core.utils import dedupe_preserve_order
 from youtube_creator_assistant.features.audio.service import AudioPlanService
 from youtube_creator_assistant.features.descriptions.service import DescriptionService
 from youtube_creator_assistant.features.thumbnails.service import ThumbnailService
@@ -13,6 +15,8 @@ from youtube_creator_assistant.profiles.registry import get_profile_definition
 
 
 class ContentPipeline:
+    MAX_SELECTED_TITLES = 3
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.runtime = RuntimeManager(settings)
@@ -36,9 +40,13 @@ class ContentPipeline:
         self.runtime.save_project(project)
         return project
 
-    def build_package(self, project_id: str, selected_title: str):
+    def build_package(self, project_id: str, selected_titles: str | Iterable[str]):
         project = self.runtime.load_project(project_id)
-        project.selected_title = selected_title.strip()
+        cleaned_titles = self._normalize_selected_titles(selected_titles)
+        if not cleaned_titles:
+            raise ValueError("At least one title must be selected.")
+        project.selected_titles = cleaned_titles
+        project.selected_title = cleaned_titles[0]
         project.preferred_references = self.title_service.generate_reference_preferences(
             project.visual_asset.path,
             project.selected_title,
@@ -60,6 +68,11 @@ class ContentPipeline:
                 project.selected_title,
                 encoding="utf-8",
             )
+        if project.selected_titles:
+            (project.project_dir / "selected_titles.txt").write_text(
+                "\n".join(project.selected_titles),
+                encoding="utf-8",
+            )
         if project.yt_thumbnail_path:
             (project.project_dir / "yt_thumbnail_path.txt").write_text(
                 str(project.yt_thumbnail_path),
@@ -68,3 +81,12 @@ class ContentPipeline:
         project.status = "package_built"
         self.runtime.save_project(project)
         return project
+
+    def _normalize_selected_titles(self, selected_titles: str | Iterable[str]) -> list[str]:
+        if isinstance(selected_titles, str):
+            raw_titles = [selected_titles]
+        else:
+            raw_titles = list(selected_titles)
+        cleaned = [title.strip() for title in raw_titles if isinstance(title, str) and title.strip()]
+        cleaned = dedupe_preserve_order(cleaned)
+        return cleaned[: self.MAX_SELECTED_TITLES]
