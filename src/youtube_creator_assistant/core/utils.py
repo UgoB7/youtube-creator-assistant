@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 import shutil
 from pathlib import Path
@@ -60,3 +61,11 @@ def dedupe_preserve_order(items: Iterable[str]) -> List[str]:
         seen.add(norm)
         output.append(item.strip())
     return output
+
+
+def stable_seed(*parts: object) -> int:
+    hasher = hashlib.sha256()
+    for part in parts:
+        hasher.update(str(part).encode("utf-8"))
+        hasher.update(b"::")
+    return int.from_bytes(hasher.digest()[:8], "big", signed=False)

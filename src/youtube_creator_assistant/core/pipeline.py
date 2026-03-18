@@ -47,9 +47,13 @@ class ContentPipeline:
             raise ValueError("At least one title must be selected.")
         project.selected_titles = cleaned_titles
         project.selected_title = cleaned_titles[0]
-        project.preferred_references = self.title_service.generate_reference_preferences(
+        project.preferred_references = self.title_service.generate_reference_preferences_for_titles(
             project.visual_asset.path,
-            project.selected_title,
+            project.selected_titles or [project.selected_title],
+        )
+        (project.project_dir / "preferred_references.txt").write_text(
+            "\n".join(project.preferred_references),
+            encoding="utf-8",
         )
         self.audio_service.build_for_project(project, project.preferred_references)
         project.themes = self.title_service.generate_themes(

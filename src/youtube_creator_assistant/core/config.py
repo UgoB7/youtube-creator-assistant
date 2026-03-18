@@ -40,6 +40,8 @@ class WorkflowSettings:
     include_gospel: bool = True
     max_head_items: Optional[int] = 3
     max_reference_summaries: int = 5
+    preferred_reference_count: int = 16
+    allow_repeats: bool = True
 
 
 @dataclass

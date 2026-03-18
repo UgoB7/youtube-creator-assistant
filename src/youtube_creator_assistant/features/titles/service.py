@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List
+from typing import Iterable, List
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.utils import dedupe_preserve_order, img_to_data_url, split_examples
@@ -52,6 +52,17 @@ class TitleAndThemeService:
         return titles[:20]
 
     def generate_reference_preferences(self, image_path, selected_title: str) -> List[str]:
+        return self.generate_reference_preferences_for_titles(image_path, [selected_title])
+
+    def generate_reference_preferences_for_titles(self, image_path, selected_titles: Iterable[str]) -> List[str]:
+        cleaned_titles = [title.strip() for title in selected_titles if isinstance(title, str) and title.strip()]
+        if not cleaned_titles:
+            return []
+        titles_block = "\n".join(f"- {title}" for title in cleaned_titles[:3])
+        target_count = max(
+            int(getattr(self.settings.workflow, "preferred_reference_count", 16) or 16),
+            int(getattr(self.settings.workflow, "max_head_items", 0) or 0),
+        )
         response = self.provider.client().responses.create(
             model=self.settings.openai.model,
             input=[
@@ -61,13 +72,18 @@ class TitleAndThemeService:
                         {
                             "type": "input_text",
                             "text": (
-                                "You are selecting the best Bible audio references for a YouTube devotional video.\n"
-                                "Given the title and image, return a ranked JSON list named preferred_refs.\n"
-                                "Use strings like 'John 14' or 'Psalm 23'. Return 10 items.\n"
-                                'Return only: {"preferred_refs": ["John 14", "Psalm 23"]}'
+                                "You are selecting Bible audio references for a YouTube devotional video.\n"
+                                "Use the image and the selected titles to create a diverse, ranked list of references.\n"
+                                "Rules:\n"
+                                "- Return a JSON object only.\n"
+                                "- Use strings like 'John 14' or 'Psalm 23'.\n"
+                                "- Prefer diversity and rotation; do not overuse the same common chapters.\n"
+                                "- Mix gospels and psalms when relevant.\n"
+                                f"- Return exactly {target_count} references.\n"
+                                '- Return only: {"preferred_refs": ["John 14", "Psalm 23"]}'
                             ),
                         },
-                        {"type": "input_text", "text": f"Title: {selected_title}"},
+                        {"type": "input_text", "text": f"Selected titles:\n{titles_block}"},
                         {"type": "input_image", "image_url": img_to_data_url(image_path)},
                     ],
                 }
@@ -76,7 +92,7 @@ class TitleAndThemeService:
         payload = self._extract_json(response.output_text)
         refs = payload.get("preferred_refs", [])
         cleaned = [item.strip() for item in refs if isinstance(item, str) and item.strip()]
-        return dedupe_preserve_order(cleaned)
+        return dedupe_preserve_order(cleaned)[:target_count]
 
     def generate_themes(self, image_path, selected_title: str, audio_labels: List[str]) -> List[str]:
         tracks_text = "\n".join(f"- {label}" for label in audio_labels[:12])

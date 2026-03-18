@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 import shutil
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from mutagen.mp3 import MP3
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import AudioTrack, ChapterEntry, VideoProject
-from youtube_creator_assistant.core.utils import tc_to_seconds
+from youtube_creator_assistant.core.utils import stable_seed, tc_to_seconds
 
 
 PSALM_RE = re.compile(r"(?i)psalm[\s_\-]*0*([0-9]+)")
@@ -33,19 +34,21 @@ class AudioPlanService:
         self.settings = settings
 
     def build_for_project(self, project: VideoProject, preferred_refs: Sequence[str]) -> VideoProject:
-        pool = self.collect_psalms()
-        if self.settings.workflow.include_gospel:
-            pool.extend(self.collect_gospels())
+        psalms = self.collect_psalms()
+        gospels = self.collect_gospels() if self.settings.workflow.include_gospel else []
+        pool = psalms + gospels
         if not pool:
             raise RuntimeError("No audio files found in the local library.")
 
         selection = self._build_selection(
-            pool_items=pool,
+            psalm_items=psalms,
+            gospel_items=gospels,
             target_seconds=tc_to_seconds(
                 self.settings.workflow.target_duration_tc,
                 self.settings.workflow.fps,
             ),
             preferred_refs=preferred_refs,
+            selection_seed=stable_seed(project.project_id, project.selected_titles, preferred_refs),
         )
 
         tracks_dir = project.project_dir / "tracks"
@@ -86,8 +89,23 @@ class AudioPlanService:
         project.audio_tracks = audio_tracks
         project.chapters = chapters
 
+        unique_duration_seconds = sum(item.duration_seconds for item in selection)
         (project.project_dir / "audio_selection.txt").write_text(
             "\n".join(track.label for track in audio_tracks),
+            encoding="utf-8",
+        )
+        (project.project_dir / "audio_selection_debug.txt").write_text(
+            "\n".join(
+                [
+                    f"Preferred refs: {', '.join(preferred_refs)}",
+                    f"Guided head target: {self.settings.workflow.max_head_items}",
+                    f"Preferred refs returned: {len(preferred_refs)}",
+                    f"Unique tracks selected: {len(audio_tracks)}",
+                    f"Unique duration seconds: {int(unique_duration_seconds)}",
+                    f"Repeats allowed: {self.settings.workflow.allow_repeats}",
+                    f"Selected tracks: {', '.join(track.label for track in audio_tracks)}",
+                ]
+            ),
             encoding="utf-8",
         )
         (project.project_dir / "chapters.txt").write_text(
@@ -134,10 +152,14 @@ class AudioPlanService:
 
     def _build_selection(
         self,
-        pool_items: Sequence[LibraryItem],
+        psalm_items: Sequence[LibraryItem],
+        gospel_items: Sequence[LibraryItem],
         target_seconds: float,
         preferred_refs: Sequence[str],
+        selection_seed: int,
     ) -> List[LibraryItem]:
+        rng = random.Random(selection_seed)
+        pool_items = list(psalm_items) + list(gospel_items)
         by_psalm: Dict[int, LibraryItem] = {}
         by_gospel: Dict[Tuple[str, int], LibraryItem] = {}
         for item in pool_items:
@@ -146,41 +168,108 @@ class AudioPlanService:
             if item.gospel_name and item.gospel_chapter is not None:
                 by_gospel.setdefault((item.gospel_name, item.gospel_chapter), item)
 
-        preferred_items: List[LibraryItem] = []
-        for ref in preferred_refs[: self.settings.workflow.max_head_items or len(preferred_refs)]:
+        preferred_psalms: List[LibraryItem] = []
+        preferred_gospels: List[LibraryItem] = []
+        for ref in preferred_refs:
             psalm_num = self._parse_psalm_number_from_text(ref)
             if psalm_num is not None and psalm_num in by_psalm:
                 item = by_psalm[psalm_num]
-                if item not in preferred_items:
-                    preferred_items.append(item)
+                if item not in preferred_psalms:
+                    preferred_psalms.append(item)
                 continue
             gospel_name, chapter = self._parse_gospel_ref(ref)
             if gospel_name and chapter is not None:
                 item = by_gospel.get((gospel_name, chapter))
-                if item and item not in preferred_items:
-                    preferred_items.append(item)
+                if item and item not in preferred_gospels:
+                    preferred_gospels.append(item)
 
         selection: List[LibraryItem] = []
         total = 0.0
-        used_paths = set()
+        used_paths: set[Path] = set()
+        head_cap = self.settings.workflow.max_head_items or len(preferred_refs)
 
-        ordered_pool = list(preferred_items) + [item for item in pool_items if item.path not in {p.path for p in preferred_items}]
+        rng.shuffle(preferred_psalms)
+        rng.shuffle(preferred_gospels)
+        preferred_head = self._interleave_lists(preferred_gospels, preferred_psalms)[:head_cap]
+        for item in preferred_head:
+            if item.path in used_paths:
+                continue
+            selection.append(item)
+            used_paths.add(item.path)
+            total += item.duration_seconds
+            if total >= target_seconds:
+                return selection
+
+        remaining_psalms = [item for item in psalm_items if item.path not in used_paths]
+        remaining_gospels = [item for item in gospel_items if item.path not in used_paths]
+        rng.shuffle(remaining_psalms)
+        rng.shuffle(remaining_gospels)
+
         while total < target_seconds:
-            added_any = False
-            for item in ordered_pool:
+            progressed = False
+            balanced_queue = self._build_balanced_queue(remaining_gospels, remaining_psalms, rng)
+            for item in balanced_queue:
                 if item.path in used_paths:
                     continue
                 selection.append(item)
                 used_paths.add(item.path)
                 total += item.duration_seconds
-                added_any = True
+                progressed = True
+                if item.kind == "psalm":
+                    remaining_psalms = [candidate for candidate in remaining_psalms if candidate.path != item.path]
+                else:
+                    remaining_gospels = [candidate for candidate in remaining_gospels if candidate.path != item.path]
                 if total >= target_seconds:
+                    return selection
+            if not progressed:
+                if not getattr(self.settings.workflow, "allow_repeats", True):
                     break
-            if total >= target_seconds:
-                break
-            if not added_any:
                 used_paths.clear()
+                remaining_psalms = list(psalm_items)
+                remaining_gospels = list(gospel_items)
+                rng.shuffle(remaining_psalms)
+                rng.shuffle(remaining_gospels)
+                if not remaining_psalms and not remaining_gospels:
+                    break
         return selection
+
+    def _build_balanced_queue(
+        self,
+        gospel_items: Sequence[LibraryItem],
+        psalm_items: Sequence[LibraryItem],
+        rng: random.Random,
+    ) -> List[LibraryItem]:
+        gospel_queue = list(gospel_items)
+        psalm_queue = list(psalm_items)
+        if not gospel_queue:
+            return psalm_queue
+        if not psalm_queue:
+            return gospel_queue
+        prefer_gospel = rng.random() < 0.5
+        if len(psalm_queue) > len(gospel_queue):
+            prefer_gospel = False
+        if len(gospel_queue) > len(psalm_queue):
+            prefer_gospel = True
+        if prefer_gospel:
+            return self._interleave_lists(gospel_queue, psalm_queue)
+        return self._interleave_lists(psalm_queue, gospel_queue)
+
+    def _interleave_lists(
+        self,
+        primary: Sequence[LibraryItem],
+        secondary: Sequence[LibraryItem],
+    ) -> List[LibraryItem]:
+        output: List[LibraryItem] = []
+        p_idx = 0
+        s_idx = 0
+        while p_idx < len(primary) or s_idx < len(secondary):
+            if p_idx < len(primary):
+                output.append(primary[p_idx])
+                p_idx += 1
+            if s_idx < len(secondary):
+                output.append(secondary[s_idx])
+                s_idx += 1
+        return output
 
     def _duration_seconds(self, path: Path) -> float:
         try:
