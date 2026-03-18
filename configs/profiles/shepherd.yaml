@@ -34,3 +34,18 @@ web:
   host: 127.0.0.1
   port: 5001
   debug: true
+
+render:
+  enabled: true
+  backend: resolve
+  timeline_prefix: shepherd
+  timeline_mode: existing_only
+  clean_media_pool_imports: true
+  media_pool_folder_name: YCA Imports
+  import_only_required_media: true
+  video_mode: mixed
+  image_strategy: fixed_full_duration
+  do_render: false
+  render_dir: ../../runtime/shepherd/renders
+  width: 1920
+  height: 1080

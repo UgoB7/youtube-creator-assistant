@@ -38,3 +38,18 @@ web:
   host: 127.0.0.1
   port: 5000
   debug: true
+
+render:
+  enabled: true
+  backend: resolve
+  timeline_prefix: vibes
+  timeline_mode: existing_only
+  clean_media_pool_imports: true
+  media_pool_folder_name: YCA Imports
+  import_only_required_media: true
+  video_mode: image
+  image_strategy: fixed_full_duration
+  do_render: false
+  render_dir: ../../runtime/vibes/renders
+  width: 1920
+  height: 1080

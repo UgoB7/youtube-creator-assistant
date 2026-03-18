@@ -12,6 +12,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.profile.id, "vibes")
         self.assertEqual(settings.paths.psalms_dir.name, "psalms")
         self.assertEqual(settings.paths.gospel_dir.name, "gospel")
+        self.assertTrue(settings.render.enabled)
+        self.assertEqual(settings.render.timeline_prefix, "vibes")
 
     def test_profile_registry_has_placeholders(self):
         self.assertEqual(get_profile_definition("vibes").display_name, "Image Workflow")

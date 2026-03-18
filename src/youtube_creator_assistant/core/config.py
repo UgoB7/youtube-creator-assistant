@@ -66,6 +66,23 @@ class WebSettings:
 
 
 @dataclass
+class RenderSettings:
+    enabled: bool = False
+    backend: str = "resolve"
+    timeline_prefix: str = "timeline"
+    timeline_mode: str = "existing_only"
+    clean_media_pool_imports: bool = True
+    media_pool_folder_name: str = "YCA Imports"
+    import_only_required_media: bool = True
+    video_mode: str = "image"
+    image_strategy: str = "fixed_full_duration"
+    do_render: bool = False
+    render_dir: Path = field(default_factory=lambda: Path("./runtime/renders"))
+    width: int = 1920
+    height: int = 1080
+
+
+@dataclass
 class Settings:
     config_path: Path
     profile: ProfileSettings
@@ -74,6 +91,7 @@ class Settings:
     thumbnail: ThumbnailSettings = field(default_factory=ThumbnailSettings)
     openai: OpenAISettings = field(default_factory=OpenAISettings)
     web: WebSettings = field(default_factory=WebSettings)
+    render: RenderSettings = field(default_factory=RenderSettings)
 
 
 def load_settings(config_path: str | Path) -> Settings:
@@ -87,6 +105,12 @@ def load_settings(config_path: str | Path) -> Settings:
     thumbnail_data: Dict[str, Any] = data.get("thumbnail", {})
     openai_data: Dict[str, Any] = data.get("openai", {})
     web_data: Dict[str, Any] = data.get("web", {})
+    render_data: Dict[str, Any] = data.get("render", {})
+    if "render_dir" in render_data:
+        render_data = {
+            **render_data,
+            "render_dir": _expand_path(render_data["render_dir"], base_dir),
+        }
 
     return Settings(
         config_path=path,
@@ -108,4 +132,5 @@ def load_settings(config_path: str | Path) -> Settings:
         thumbnail=ThumbnailSettings(**thumbnail_data),
         openai=OpenAISettings(**openai_data),
         web=WebSettings(**web_data),
+        render=RenderSettings(**render_data),
     )

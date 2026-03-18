@@ -79,6 +79,9 @@ class VideoProject:
     chapters: List[ChapterEntry] = field(default_factory=list)
     description_text: Optional[str] = None
     yt_thumbnail_path: Optional[Path] = None
+    resolve_timeline_name: Optional[str] = None
+    resolve_last_synced_at: Optional[str] = None
+    resolve_last_error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -107,4 +110,7 @@ class VideoProject:
             chapters=[ChapterEntry(**item) for item in data.get("chapters", [])],
             description_text=data.get("description_text"),
             yt_thumbnail_path=Path(str(data["yt_thumbnail_path"])) if data.get("yt_thumbnail_path") else None,
+            resolve_timeline_name=data.get("resolve_timeline_name"),
+            resolve_last_synced_at=data.get("resolve_last_synced_at"),
+            resolve_last_error=data.get("resolve_last_error"),
         )

@@ -39,7 +39,7 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload an image, generate title candidates, choose up to 3 titles, then build the package.</p>
+      <p class="muted">Upload an image, generate title candidates, choose up to 3 titles, build the package, then optionally send it to Resolve.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -96,10 +96,19 @@ PAGE = """<!doctype html>
       {% endif %}
     </div>
 
-    {% if project and project.status == "package_built" %}
+    {% if project and project.status in ["package_built", "resolve_synced"] %}
       <div class="card">
         <h2>Outputs</h2>
         <p><strong>Primary title</strong>: {{ project.selected_title }}</p>
+        {% if project.resolve_timeline_name %}
+          <p><strong>Resolve timeline</strong>: {{ project.resolve_timeline_name }}</p>
+        {% endif %}
+        {% if project.resolve_last_synced_at %}
+          <p class="muted">Last Resolve sync: {{ project.resolve_last_synced_at }}</p>
+        {% endif %}
+        {% if project.resolve_last_error %}
+          <p class="flash">{{ project.resolve_last_error }}</p>
+        {% endif %}
         {% if project.selected_titles %}
           <p><strong>Selected titles</strong></p>
           <ul>
@@ -120,11 +129,19 @@ PAGE = """<!doctype html>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='yt_video_description.txt') }}">yt_video_description.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='themes.txt') }}">themes.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='audio_selection.txt') }}">audio_selection.txt</a></li>
+          <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='audio_selection_debug.txt') }}">audio_selection_debug.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='selected_titles.txt') }}">selected_titles.txt</a></li>
+          <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='render_plan.json') }}">render_plan.json</a></li>
+          {% if project.resolve_last_synced_at %}
+            <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='resolve_sync.json') }}">resolve_sync.json</a></li>
+          {% endif %}
           {% if project.yt_thumbnail_path %}
             <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='artifacts/' + project.yt_thumbnail_path.name) }}">thumbnail</a></li>
           {% endif %}
         </ul>
+        <form method="post" action="{{ url_for('send_to_resolve_route', project_id=project.project_id) }}">
+          <button class="secondary" type="submit">Send to Resolve</button>
+        </form>
       </div>
     {% endif %}
   </div>
@@ -234,6 +251,20 @@ def create_app(config_path: Path) -> Flask:
             return redirect(url_for("index", project_id=project_id))
         pipeline.build_package(project_id, titles)
         return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/send-to-resolve")
+    def send_to_resolve_route(project_id: str):
+        try:
+            project, result = pipeline.send_to_resolve(project_id)
+            flash(result.message)
+            return redirect(url_for("index", project_id=project.project_id))
+        except Exception as exc:
+            project = _get_project(project_id)
+            if project is not None:
+                project.resolve_last_error = str(exc)
+                pipeline.runtime.save_project(project)
+            flash(str(exc))
+            return redirect(url_for("index", project_id=project_id))
 
     @app.get("/projects/<project_id>/files/<path:relpath>")
     def project_file(project_id: str, relpath: str):

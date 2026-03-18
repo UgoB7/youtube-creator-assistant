@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from youtube_creator_assistant.core.config import Settings
+from youtube_creator_assistant.features.render.builder import RenderPlanBuilder
 from youtube_creator_assistant.core.runtime import RuntimeManager
 from youtube_creator_assistant.core.utils import dedupe_preserve_order
 from youtube_creator_assistant.features.audio.service import AudioPlanService
 from youtube_creator_assistant.features.descriptions.service import DescriptionService
 from youtube_creator_assistant.features.thumbnails.service import ThumbnailService
 from youtube_creator_assistant.features.titles.service import TitleAndThemeService
+from youtube_creator_assistant.providers.resolve import ResolveProvider
 from youtube_creator_assistant.profiles.registry import get_profile_definition
 
 
@@ -25,6 +28,8 @@ class ContentPipeline:
         self.audio_service = AudioPlanService(settings)
         self.description_service = DescriptionService(settings)
         self.thumbnail_service = ThumbnailService(settings)
+        self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
+        self.resolve_provider = ResolveProvider(settings)
 
     def create_project(self, visual_source: str | Path):
         return self.runtime.create_project(Path(visual_source))
@@ -39,6 +44,36 @@ class ContentPipeline:
         )
         self.runtime.save_project(project)
         return project
+
+    def build_render_plan(self, project_id: str):
+        project = self.runtime.load_project(project_id)
+        plan = self.render_plan_builder.build_for_project(project)
+        plan.write_json(project.project_dir / "render_plan.json")
+        return plan
+
+    def send_to_resolve(self, project_id: str):
+        project = self.runtime.load_project(project_id)
+        plan = self.render_plan_builder.build_for_project(project)
+        plan.write_json(project.project_dir / "render_plan.json")
+        result = self.resolve_provider.sync_render_plan(plan)
+        (project.project_dir / "resolve_sync.json").write_text(
+            json.dumps(
+                {
+                    "timeline_name": result.timeline_name,
+                    "imported_media_count": result.imported_media_count,
+                    "message": result.message,
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        project.resolve_timeline_name = result.timeline_name
+        project.resolve_last_synced_at = datetime.now(timezone.utc).isoformat()
+        project.resolve_last_error = None
+        project.status = "resolve_synced"
+        self.runtime.save_project(project)
+        return project, result
 
     def build_package(self, project_id: str, selected_titles: str | Iterable[str]):
         project = self.runtime.load_project(project_id)
@@ -67,6 +102,8 @@ class ContentPipeline:
         )
         self.description_service.build_description(project)
         self.thumbnail_service.build_thumbnail(project)
+        plan = self.render_plan_builder.build_for_project(project)
+        plan.write_json(project.project_dir / "render_plan.json")
         if project.selected_title:
             (project.project_dir / "selected_title.txt").write_text(
                 project.selected_title,
@@ -82,6 +119,9 @@ class ContentPipeline:
                 str(project.yt_thumbnail_path),
                 encoding="utf-8",
             )
+        project.resolve_timeline_name = plan.timeline_name
+        project.resolve_last_synced_at = None
+        project.resolve_last_error = None
         project.status = "package_built"
         self.runtime.save_project(project)
         return project

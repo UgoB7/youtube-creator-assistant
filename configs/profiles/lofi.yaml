@@ -34,3 +34,18 @@ web:
   host: 127.0.0.1
   port: 5003
   debug: true
+
+render:
+  enabled: true
+  backend: resolve
+  timeline_prefix: lofi
+  timeline_mode: existing_only
+  clean_media_pool_imports: true
+  media_pool_folder_name: YCA Imports
+  import_only_required_media: true
+  video_mode: video
+  image_strategy: fixed_full_duration
+  do_render: false
+  render_dir: ../../runtime/lofi/renders
+  width: 1920
+  height: 1080
