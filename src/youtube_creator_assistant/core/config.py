@@ -61,6 +61,7 @@ class OpenAISettings:
 @dataclass
 class ReplicateSettings:
     enabled: bool = False
+    prompt_seed_path: Path = field(default_factory=lambda: Path("./assets/prompts/shepherd_prompts.txt"))
     image_model: str = "bytedance/seedream-4"
     image_output_format: str = "png"
     image_size: str = "2K"
@@ -125,6 +126,11 @@ def load_settings(config_path: str | Path) -> Settings:
     thumbnail_data: Dict[str, Any] = data.get("thumbnail", {})
     openai_data: Dict[str, Any] = data.get("openai", {})
     replicate_data: Dict[str, Any] = data.get("replicate", {})
+    if "prompt_seed_path" in replicate_data:
+        replicate_data = {
+            **replicate_data,
+            "prompt_seed_path": _expand_path(replicate_data["prompt_seed_path"], base_dir),
+        }
     web_data: Dict[str, Any] = data.get("web", {})
     render_data: Dict[str, Any] = data.get("render", {})
     if "render_dir" in render_data:

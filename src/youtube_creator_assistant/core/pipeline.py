@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from youtube_creator_assistant.core.config import Settings
+from youtube_creator_assistant.features.replicate.service import ShepherdReplicateService
 from youtube_creator_assistant.features.render.builder import RenderPlanBuilder
 from youtube_creator_assistant.core.runtime import RuntimeManager
 from youtube_creator_assistant.core.utils import dedupe_preserve_order
@@ -31,37 +32,34 @@ class ContentPipeline:
         self.thumbnail_service = ThumbnailService(settings)
         self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
         self.replicate_provider = ReplicateProvider(settings)
+        self.shepherd_replicate_service = ShepherdReplicateService(
+            settings,
+            replicate_provider=self.replicate_provider,
+        )
         self.resolve_provider = ResolveProvider(settings)
 
     def create_project(self, visual_source: str | Path):
         return self.runtime.create_project(Path(visual_source))
 
-    def create_project_from_prompt(self, prompt: str):
-        cleaned_prompt = prompt.strip()
-        if not cleaned_prompt:
-            raise ValueError("A prompt is required to generate shepherd visuals.")
+    def create_project_from_seed_prompts(self):
         if self.settings.profile.id != "shepherd":
-            raise ValueError("Prompt-based Replicate generation is only enabled for the shepherd profile.")
+            raise ValueError("Seed-based Replicate generation is only enabled for the shepherd profile.")
         if not self.settings.replicate.enabled:
             raise RuntimeError("Replicate is disabled for this profile.")
 
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
 
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
-        image_path = generated_dir / f"shepherd_image_{stamp}.{image_ext}"
-        image_path.write_bytes(self.replicate_provider.generate_image_bytes(cleaned_prompt))
-
-        video_path = generated_dir / f"shepherd_video_{stamp}.mp4"
-        video_path.write_bytes(self.replicate_provider.generate_video_bytes(image_path))
+        generated_prompt, image_path, video_path = self.shepherd_replicate_service.generate_visual_stack(
+            generated_dir
+        )
 
         project = self.runtime.create_project_from_assets(
             image_path,
             render_visual_source=video_path,
-            source_prompt=cleaned_prompt,
+            source_prompt=generated_prompt,
         )
-        (project.project_dir / "replicate_prompt.txt").write_text(cleaned_prompt, encoding="utf-8")
+        (project.project_dir / "replicate_prompt.txt").write_text(generated_prompt, encoding="utf-8")
         self.runtime.save_project(project)
         return project
 

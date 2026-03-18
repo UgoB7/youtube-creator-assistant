@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/shepherd.yaml")
         self.assertTrue(settings.replicate.enabled)
+        self.assertEqual(settings.replicate.prompt_seed_path.name, "shepherd_prompts.txt")
         self.assertEqual(settings.replicate.image_model, "bytedance/seedream-4")
         self.assertEqual(settings.replicate.video_model, "bytedance/seedance-1.5-pro")
 

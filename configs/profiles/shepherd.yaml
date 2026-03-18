@@ -32,6 +32,7 @@ openai:
 
 replicate:
   enabled: true
+  prompt_seed_path: ../../assets/prompts/shepherd_prompts.txt
   image_model: bytedance/seedream-4
   image_output_format: png
   image_size: 2K
@@ -39,7 +40,7 @@ replicate:
   image_enhance_prompt: false
   image_sequential_generation: disabled
   video_model: bytedance/seedance-1.5-pro
-  video_fps: 24
+  video_fps: 30
   video_duration: 12
   video_resolution: 1080p
   video_aspect_ratio: "16:9"

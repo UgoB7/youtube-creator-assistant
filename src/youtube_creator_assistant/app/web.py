@@ -39,7 +39,7 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload a visual, or for shepherd generate an image then a video with Replicate, then build the package and send it to Resolve.</p>
+      <p class="muted">Upload a visual, or for shepherd let the app generate an image prompt with the LLM from the local seed list, then create an image and a video with Replicate.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -48,8 +48,7 @@ PAGE = """<!doctype html>
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
         <input type="file" name="visual" accept="{{ accept_attr }}">
         {% if settings.profile.id == "shepherd" and settings.replicate.enabled %}
-          <p class="muted">Or create the shepherd visual stack with Replicate.</p>
-          <textarea name="replicate_prompt" rows="4" style="width: 100%; margin: 8px 0 12px;" placeholder="Describe the scene to generate with Replicate."></textarea>
+          <p class="muted">If you leave the file empty, shepherd will auto-generate a prompt from the local prompt seeds, then run Replicate image -> video.</p>
         {% endif %}
         <button type="submit">Create project</button>
       </form>
@@ -247,7 +246,6 @@ def create_app(config_path: Path) -> Flask:
     @app.post("/projects")
     def create_project_route():
         uploaded = request.files.get("visual")
-        replicate_prompt = (request.form.get("replicate_prompt") or "").strip()
         if uploaded and uploaded.filename:
             incoming_dir = settings.paths.incoming_dir
             incoming_dir.mkdir(parents=True, exist_ok=True)
@@ -255,10 +253,10 @@ def create_app(config_path: Path) -> Flask:
             temp_path = incoming_dir / filename
             uploaded.save(temp_path)
             project = pipeline.create_project(temp_path)
-        elif replicate_prompt and settings.profile.id == "shepherd" and settings.replicate.enabled:
-            project = pipeline.create_project_from_prompt(replicate_prompt)
+        elif settings.profile.id == "shepherd" and settings.replicate.enabled:
+            project = pipeline.create_project_from_seed_prompts()
         else:
-            flash("Please upload a visual file, or provide a Replicate prompt for shepherd.")
+            flash("Please upload a visual file, or use shepherd with Replicate enabled.")
             return redirect(url_for("index"))
         return redirect(url_for("index", project_id=project.project_id))
 
