@@ -1,8 +1,8 @@
 # youtube-creator-assistant
 
-A modular workspace for assisting YouTube content creation across multiple profiles such as VibesPro, Shepherd, Mercy, and Lofi.
+A modular workspace for assisting YouTube content creation across multiple configurable workflows.
 
-This first version focuses on the `vibespro` profile and is built to scale:
+This first version focuses on an image-first workflow and is built to scale:
 
 - one shared core pipeline
 - profile-specific YAML configs
@@ -12,7 +12,7 @@ This first version focuses on the `vibespro` profile and is built to scale:
 
 ## Current MVP
 
-For the `vibespro` profile, the app can:
+For the current image-first workflow, the app can:
 
 - take an input image
 - generate title candidates with OpenAI
@@ -51,38 +51,38 @@ pip install -e .[dev]
 
 1. Copy `.env.example` to `.env`
 2. Set `OPENAI_API_KEY`
-3. Use the default profile config at `configs/profiles/vibespro.yaml`
+3. Use the default workflow config at `configs/profiles/vibes.yaml`
 
 ## CLI
 
 Create a project from an image:
 
 ```bash
-yca init-project --config configs/profiles/vibespro.yaml --visual /path/to/image.png
+yca init-project --config configs/profiles/vibes.yaml --visual /path/to/image.png
 ```
 
 Generate titles:
 
 ```bash
-yca generate-titles --config configs/profiles/vibespro.yaml --project-id <project_id>
+yca generate-titles --config configs/profiles/vibes.yaml --project-id <project_id>
 ```
 
 Build the package after choosing a title:
 
 ```bash
-yca build-package --config configs/profiles/vibespro.yaml --project-id <project_id> --title "Chosen title"
+yca build-package --config configs/profiles/vibes.yaml --project-id <project_id> --title "Chosen title"
 ```
 
 One-shot helper:
 
 ```bash
-yca run --config configs/profiles/vibespro.yaml --visual /path/to/image.png
+yca run --config configs/profiles/vibes.yaml --visual /path/to/image.png
 ```
 
 ## Web UI
 
 ```bash
-yca-web --config configs/profiles/vibespro.yaml
+yca-web --config configs/profiles/vibes.yaml
 ```
 
 The UI supports:
@@ -95,4 +95,4 @@ The UI supports:
 ## Notes
 
 - Large audio libraries are copied locally into `assets/audio/` but ignored by Git.
-- `shepherd`, `mercy`, and `lofi` already have placeholder profile configs and registry entries for future expansion.
+- Additional workflow configs are already scaffolded for future expansion.

@@ -1,14 +1,14 @@
 profile:
-  id: vibespro
-  display_name: VibesPro
+  id: vibes
+  display_name: Image Workflow
   visual_input_mode: image
 
 paths:
-  runtime_root: ../../runtime/vibespro
-  outputs_dir: ../../runtime/vibespro/outputs
-  incoming_dir: ../../runtime/vibespro/incoming
-  images_dir: ../../runtime/vibespro/images
-  logs_dir: ../../runtime/vibespro/logs
+  runtime_root: ../../runtime/vibes
+  outputs_dir: ../../runtime/vibes/outputs
+  incoming_dir: ../../runtime/vibes/incoming
+  images_dir: ../../runtime/vibes/images
+  logs_dir: ../../runtime/vibes/logs
   psalms_dir: ../../assets/audio/psalms
   gospel_dir: ../../assets/audio/gospel
 

@@ -1,6 +1,6 @@
 profile:
   id: lofi
-  display_name: Lofi
+  display_name: Video Workflow
   visual_input_mode: video
 
 paths:

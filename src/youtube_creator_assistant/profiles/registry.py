@@ -4,11 +4,11 @@ from youtube_creator_assistant.profiles.base import ProfileDefinition
 from youtube_creator_assistant.profiles.lofi import PROFILE as LOFI
 from youtube_creator_assistant.profiles.mercy import PROFILE as MERCY
 from youtube_creator_assistant.profiles.shepherd import PROFILE as SHEPHERD
-from youtube_creator_assistant.profiles.vibespro import PROFILE as VIBESPRO
+from youtube_creator_assistant.profiles.vibes import PROFILE as VIBES
 
 
 PROFILE_REGISTRY = {
-    VIBESPRO.profile_id: VIBESPRO,
+    VIBES.profile_id: VIBES,
     SHEPHERD.profile_id: SHEPHERD,
     MERCY.profile_id: MERCY,
     LOFI.profile_id: LOFI,

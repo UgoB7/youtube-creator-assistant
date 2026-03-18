@@ -1,6 +1,6 @@
 profile:
   id: shepherd
-  display_name: Shepherd
+  display_name: Mixed Visual Workflow
   visual_input_mode: image_or_video
 
 paths:

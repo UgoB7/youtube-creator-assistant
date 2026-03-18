@@ -16,13 +16,13 @@ class ThumbnailServiceTests(unittest.TestCase):
         Image.new("RGB", (64, 64), (120, 80, 30)).save(image_path)
 
         root = Path(__file__).resolve().parents[1]
-        settings = load_settings(root / "configs/profiles/vibespro.yaml")
+        settings = load_settings(root / "configs/profiles/vibes.yaml")
         project_dir = temp_root / "project"
         (project_dir / "artifacts").mkdir(parents=True, exist_ok=True)
 
         project = VideoProject(
             project_id="test-project",
-            profile_id="vibespro",
+            profile_id="vibes",
             project_dir=project_dir,
             visual_asset=VisualAsset(kind="image", path=image_path, original_name=image_path.name),
             created_at="2026-01-01T00:00:00+00:00",
