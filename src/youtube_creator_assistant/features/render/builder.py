@@ -4,7 +4,7 @@ from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import VideoProject
 from youtube_creator_assistant.core.render_plan import RenderPlan, RenderSegment
 from youtube_creator_assistant.core.runtime import RuntimeManager
-from youtube_creator_assistant.core.utils import probe_video_duration_seconds
+from youtube_creator_assistant.core.utils import probe_video_metadata
 
 
 class RenderPlanBuilder:
@@ -12,13 +12,13 @@ class RenderPlanBuilder:
         self.settings = settings
         self.runtime = runtime
 
-    def build_for_project(self, project: VideoProject) -> RenderPlan:
+    def build_for_project(self, project: VideoProject, fps_override: float | None = None) -> RenderPlan:
         if not project.audio_tracks:
             raise ValueError("Build the package before sending the project to Resolve.")
 
         timeline_index = self._timeline_index_for_project(project)
         timeline_name = f"{self.settings.render.timeline_prefix}{timeline_index:02d}"
-        fps = self.settings.workflow.fps
+        fps = float(fps_override or self.settings.workflow.fps)
 
         audio_segments: list[RenderSegment] = []
         record_frame = 0
@@ -53,7 +53,7 @@ class RenderPlanBuilder:
 
         render_asset = project.render_visual_asset or project.visual_asset
         if render_asset.kind == "video":
-            visual_segments = self._build_video_segments(render_asset, duration_frames, fps)
+            visual_segments = self._build_video_segments(project, render_asset, duration_frames, fps)
         else:
             visual_segments = [
                 RenderSegment(
@@ -95,26 +95,56 @@ class RenderPlanBuilder:
                 return index
         raise ValueError(f"Project {project.project_id} is missing from runtime outputs.")
 
-    def _build_video_segments(self, visual_asset, duration_frames: int, fps: int) -> list[RenderSegment]:
-        source_seconds = probe_video_duration_seconds(visual_asset.path)
-        source_frames = max(1, round((source_seconds or (duration_frames / float(fps))) * fps))
+    def _build_video_segments(self, project: VideoProject, visual_asset, duration_frames: int, fps: float) -> list[RenderSegment]:
+        source_seconds, source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
+        source_frames = max(1, round(source_seconds * source_fps))
+        source_timeline_frames = max(1, round(source_seconds * fps))
         remaining = duration_frames
         record_frame = 0
         segments: list[RenderSegment] = []
 
         while remaining > 0:
-            put_frames = min(source_frames, remaining)
+            put_timeline_frames = min(source_timeline_frames, remaining)
+            if put_timeline_frames >= source_timeline_frames:
+                put_source_frames = source_frames
+            else:
+                put_seconds = put_timeline_frames / float(fps)
+                put_source_frames = max(1, min(source_frames, round(put_seconds * source_fps)))
             segments.append(
                 RenderSegment(
                     media_kind="video",
                     label=visual_asset.original_name,
                     path=visual_asset.path,
                     start_frame=0,
-                    end_frame=max(0, put_frames - 1),
+                    end_frame=max(0, put_source_frames - 1),
                     record_frame=record_frame,
                     track_index=1,
                 )
             )
-            record_frame += put_frames
-            remaining -= put_frames
+            record_frame += put_timeline_frames
+            remaining -= put_timeline_frames
         return segments
+
+    def _video_source_timing(
+        self,
+        project: VideoProject,
+        visual_asset,
+        duration_frames: int,
+        timeline_fps: float,
+    ) -> tuple[float, float]:
+        stored_seconds = getattr(visual_asset, "duration_seconds", None)
+        stored_fps = getattr(visual_asset, "fps", None)
+        probed_seconds, probed_fps = probe_video_metadata(visual_asset.path)
+        source_seconds = probed_seconds if probed_seconds is not None else stored_seconds
+        source_fps = probed_fps if probed_fps is not None else stored_fps
+        if (
+            (source_seconds is None or source_fps is None)
+            and project.render_visual_asset is not None
+            and visual_asset.path == project.render_visual_asset.path
+            and self.settings.replicate.enabled
+        ):
+            source_seconds = source_seconds if source_seconds is not None else float(self.settings.replicate.video_duration)
+            source_fps = source_fps if source_fps is not None else float(self.settings.replicate.video_fps)
+        source_seconds = source_seconds or (duration_frames / float(timeline_fps))
+        source_fps = source_fps or float(timeline_fps)
+        return float(source_seconds), float(source_fps)

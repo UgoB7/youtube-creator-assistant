@@ -14,6 +14,9 @@ from youtube_creator_assistant.core.render_plan import RenderPlan, RenderSegment
 class ResolveSyncResult:
     timeline_name: str
     imported_media_count: int
+    timeline_fps: float
+    timeline_duration_frames: int
+    timeline_duration_seconds: float
     message: str
 
 
@@ -44,6 +47,12 @@ class ResolveProvider:
             raise RuntimeError(
                 f"Timeline {plan.timeline_name} was not found in the current Resolve project. "
                 "Create it manually, then retry Send to Resolve."
+            )
+        timeline_fps = self._read_timeline_fps(project, timeline)
+        if abs(float(plan.fps) - timeline_fps) > 0.01:
+            raise RuntimeError(
+                f"Render plan fps ({plan.fps:.3f}) does not match Resolve timeline fps ({timeline_fps:.3f}) "
+                f"for {plan.timeline_name}. Rebuild the plan and retry Send to Resolve."
             )
 
         try:
@@ -77,11 +86,32 @@ class ResolveProvider:
         except Exception:
             pass
 
+        timeline_duration_frames = self._timeline_duration_frames(timeline)
+
         return ResolveSyncResult(
             timeline_name=plan.timeline_name,
             imported_media_count=len(imported_items),
+            timeline_fps=timeline_fps,
+            timeline_duration_frames=timeline_duration_frames,
+            timeline_duration_seconds=timeline_duration_frames / timeline_fps,
             message=f"Timeline {plan.timeline_name} updated successfully.",
         )
+
+    def get_timeline_fps(self, timeline_name: str) -> float:
+        resolve = self._resolve_app()
+        manager = resolve.GetProjectManager()
+        if not manager:
+            raise RuntimeError("Resolve ProjectManager is unavailable.")
+        project = manager.GetCurrentProject()
+        if not project:
+            raise RuntimeError("No active Resolve project is open.")
+        timeline = self._find_timeline(project, timeline_name)
+        if not timeline:
+            raise RuntimeError(
+                f"Timeline {timeline_name} was not found in the current Resolve project. "
+                "Create it manually, then retry Send to Resolve."
+            )
+        return self._read_timeline_fps(project, timeline)
 
     def _resolve_app(self):
         self._ensure_resolve_modules()
@@ -122,6 +152,39 @@ class ResolveProvider:
             if name == timeline_name:
                 return timeline
         return None
+
+    def _read_timeline_fps(self, project, timeline) -> float:
+        for owner in (timeline, project):
+            if not owner:
+                continue
+            try:
+                raw = owner.GetSetting("timelineFrameRate")
+            except Exception:
+                raw = None
+            fps = self._parse_fps_value(raw)
+            if fps is not None:
+                return fps
+        return float(self.settings.workflow.fps)
+
+    def _parse_fps_value(self, raw) -> float | None:
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        text = text.replace("DF", "").strip()
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def _timeline_duration_frames(self, timeline) -> int:
+        try:
+            start = int(timeline.GetStartFrame() or 0)
+            end = int(timeline.GetEndFrame() or 0)
+        except Exception:
+            return 0
+        return max(0, end - start + 1)
 
     def _ensure_import_folder(self, media_pool, folder_name: str):
         root = media_pool.GetRootFolder()
@@ -289,8 +352,11 @@ class ResolveProvider:
     def _append_segments(self, media_pool, segments: List[RenderSegment], path_to_item: dict[Path, object]) -> None:
         if not segments:
             return
-        instructions = []
-        for segment in segments:
+        ordered_segments = sorted(
+            segments,
+            key=lambda segment: (segment.track_index, segment.record_frame, segment.start_frame, segment.end_frame),
+        )
+        for segment in ordered_segments:
             resolved_path = segment.path.expanduser().resolve()
             media_item = path_to_item.get(resolved_path)
             if not media_item:
@@ -301,16 +367,16 @@ class ResolveProvider:
             if not media_item:
                 raise RuntimeError(f"Imported media item is missing in Resolve for {segment.path}.")
             media_type = 2 if segment.media_kind == "audio" else 1
-            instructions.append(
-                {
-                    "mediaPoolItem": media_item,
-                    "startFrame": segment.start_frame,
-                    "endFrame": segment.end_frame,
-                    "recordFrame": segment.record_frame,
-                    "trackIndex": segment.track_index,
-                    "mediaType": media_type,
-                }
-            )
-        ok = media_pool.AppendToTimeline(instructions)
-        if not ok:
-            raise RuntimeError("Resolve failed while appending media to the timeline.")
+            instruction = {
+                "mediaPoolItem": media_item,
+                "startFrame": segment.start_frame,
+                "endFrame": segment.end_frame,
+                "recordFrame": segment.record_frame,
+                "trackIndex": segment.track_index,
+                "mediaType": media_type,
+            }
+            ok = media_pool.AppendToTimeline([instruction])
+            if not ok:
+                raise RuntimeError(
+                    f"Resolve failed while appending {segment.media_kind} segment at recordFrame {segment.record_frame}."
+                )

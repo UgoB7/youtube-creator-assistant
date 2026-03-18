@@ -58,6 +58,8 @@ class ContentPipeline:
             image_path,
             render_visual_source=video_path,
             source_prompt=generated_prompt,
+            render_visual_duration_seconds=float(self.settings.replicate.video_duration),
+            render_visual_fps=float(self.settings.replicate.video_fps),
         )
         (project.project_dir / "replicate_prompt.txt").write_text(generated_prompt, encoding="utf-8")
         self.runtime.save_project(project)
@@ -82,7 +84,9 @@ class ContentPipeline:
 
     def send_to_resolve(self, project_id: str):
         project = self.runtime.load_project(project_id)
-        plan = self.render_plan_builder.build_for_project(project)
+        draft_plan = self.render_plan_builder.build_for_project(project)
+        timeline_fps = self.resolve_provider.get_timeline_fps(draft_plan.timeline_name)
+        plan = self.render_plan_builder.build_for_project(project, fps_override=timeline_fps)
         plan.write_json(project.project_dir / "render_plan.json")
         result = self.resolve_provider.sync_render_plan(plan)
         (project.project_dir / "resolve_sync.json").write_text(
@@ -90,6 +94,9 @@ class ContentPipeline:
                 {
                     "timeline_name": result.timeline_name,
                     "imported_media_count": result.imported_media_count,
+                    "timeline_fps": result.timeline_fps,
+                    "timeline_duration_frames": result.timeline_duration_frames,
+                    "timeline_duration_seconds": result.timeline_duration_seconds,
                     "message": result.message,
                     "synced_at": datetime.now(timezone.utc).isoformat(),
                 },

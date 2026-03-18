@@ -46,7 +46,7 @@ class RenderPlan:
     profile_id: str
     timeline_index: int
     timeline_name: str
-    fps: int
+    fps: float
     duration_frames: int
     duration_seconds: float
     video_mode: str
@@ -80,7 +80,7 @@ class RenderPlan:
             profile_id=str(data["profile_id"]),
             timeline_index=int(data["timeline_index"]),
             timeline_name=str(data["timeline_name"]),
-            fps=int(data["fps"]),
+            fps=float(data["fps"]),
             duration_frames=int(data["duration_frames"]),
             duration_seconds=float(data["duration_seconds"]),
             video_mode=str(data["video_mode"]),

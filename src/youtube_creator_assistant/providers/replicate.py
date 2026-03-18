@@ -29,7 +29,7 @@ class ReplicateProvider:
     def generate_video_bytes(self, image_path: Path) -> bytes:
         with image_path.open("rb") as first, image_path.open("rb") as last:
             payload = {
-                "fps": self.settings.replicate.video_fps,
+                "fps": int(self.settings.replicate.video_fps or 24),
                 "image": first,
                 "prompt": self.settings.replicate.video_prompt,
                 "duration": self.settings.replicate.video_duration,

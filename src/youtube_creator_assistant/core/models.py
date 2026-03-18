@@ -10,12 +10,16 @@ class VisualAsset:
     kind: str
     path: Path
     original_name: str
+    duration_seconds: Optional[float] = None
+    fps: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "kind": self.kind,
             "path": str(self.path),
             "original_name": self.original_name,
+            "duration_seconds": self.duration_seconds,
+            "fps": self.fps,
         }
 
     @classmethod
@@ -24,6 +28,8 @@ class VisualAsset:
             kind=str(data["kind"]),
             path=Path(str(data["path"])),
             original_name=str(data["original_name"]),
+            duration_seconds=float(data["duration_seconds"]) if data.get("duration_seconds") is not None else None,
+            fps=float(data["fps"]) if data.get("fps") is not None else None,
         )
 
 

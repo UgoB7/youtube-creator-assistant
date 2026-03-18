@@ -8,7 +8,7 @@ from typing import List
 
 from .config import Settings
 from .models import VideoProject, VisualAsset
-from .utils import ensure_dir, slugify
+from .utils import ensure_dir, probe_video_metadata, slugify
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -32,6 +32,10 @@ class RuntimeManager:
         primary_visual_source: Path,
         render_visual_source: Path | None = None,
         source_prompt: str | None = None,
+        primary_visual_duration_seconds: float | None = None,
+        primary_visual_fps: float | None = None,
+        render_visual_duration_seconds: float | None = None,
+        render_visual_fps: float | None = None,
     ) -> VideoProject:
         visual_source = primary_visual_source.expanduser().resolve()
         if not visual_source.exists():
@@ -39,6 +43,12 @@ class RuntimeManager:
 
         visual_kind = self._detect_visual_kind(visual_source)
         self._validate_visual_kind(visual_kind)
+        if visual_kind == "video" and (primary_visual_duration_seconds is None or primary_visual_fps is None):
+            detected_duration, detected_fps = probe_video_metadata(visual_source)
+            if primary_visual_duration_seconds is None:
+                primary_visual_duration_seconds = detected_duration
+            if primary_visual_fps is None:
+                primary_visual_fps = detected_fps
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         project_id = f"{stamp}-{slugify(visual_source.stem)}"
@@ -59,6 +69,12 @@ class RuntimeManager:
             if not render_visual_source.exists():
                 raise FileNotFoundError(f"Render visual source not found: {render_visual_source}")
             render_kind = self._detect_visual_kind(render_visual_source)
+            if render_kind == "video" and (render_visual_duration_seconds is None or render_visual_fps is None):
+                detected_duration, detected_fps = probe_video_metadata(render_visual_source)
+                if render_visual_duration_seconds is None:
+                    render_visual_duration_seconds = detected_duration
+                if render_visual_fps is None:
+                    render_visual_fps = detected_fps
             copied_render_visual = input_dir / f"render_visual{render_visual_source.suffix.lower()}"
             shutil.copy2(render_visual_source, copied_render_visual)
 
@@ -70,6 +86,8 @@ class RuntimeManager:
                 kind=visual_kind,
                 path=copied_visual,
                 original_name=visual_source.name,
+                duration_seconds=primary_visual_duration_seconds,
+                fps=primary_visual_fps,
             ),
             created_at=datetime.now(timezone.utc).isoformat(),
             render_visual_asset=(
@@ -77,6 +95,8 @@ class RuntimeManager:
                     kind=render_kind,
                     path=copied_render_visual,
                     original_name=render_visual_source.name,
+                    duration_seconds=render_visual_duration_seconds,
+                    fps=render_visual_fps,
                 )
                 if copied_render_visual is not None and render_visual_source is not None and render_kind is not None
                 else None
