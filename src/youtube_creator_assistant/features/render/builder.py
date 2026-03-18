@@ -4,7 +4,7 @@ from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import VideoProject
 from youtube_creator_assistant.core.render_plan import RenderPlan, RenderSegment
 from youtube_creator_assistant.core.runtime import RuntimeManager
-from youtube_creator_assistant.core.utils import probe_video_metadata
+from youtube_creator_assistant.core.utils import probe_video_metadata, tc_to_seconds
 
 
 class RenderPlanBuilder:
@@ -19,12 +19,19 @@ class RenderPlanBuilder:
         timeline_index = self._timeline_index_for_project(project)
         timeline_name = f"{self.settings.render.timeline_prefix}{timeline_index:02d}"
         fps = float(fps_override or self.settings.workflow.fps)
+        target_duration_frames = max(
+            1,
+            round(tc_to_seconds(self.settings.workflow.target_duration_tc, int(round(fps))) * fps),
+        )
 
         audio_segments: list[RenderSegment] = []
         record_frame = 0
+        remaining_frames = target_duration_frames
         trim_frames_remaining = max(0, round(self.settings.workflow.trim_first_audio_seconds * fps))
 
         for track in project.audio_tracks:
+            if remaining_frames <= 0:
+                break
             clip_frames = max(1, round(track.duration_seconds * fps))
             start_frame = 0
             if trim_frames_remaining > 0:
@@ -34,7 +41,8 @@ class RenderPlanBuilder:
                 start_frame = trim_frames_remaining
                 clip_frames -= trim_frames_remaining
                 trim_frames_remaining = 0
-            end_frame = start_frame + max(0, clip_frames - 1)
+            put_frames = min(clip_frames, remaining_frames)
+            end_frame = start_frame + max(0, put_frames - 1)
             audio_segments.append(
                 RenderSegment(
                     media_kind="audio",
@@ -46,9 +54,10 @@ class RenderPlanBuilder:
                     track_index=1,
                 )
             )
-            record_frame += clip_frames
+            record_frame += put_frames
+            remaining_frames -= put_frames
 
-        duration_frames = max(1, record_frame)
+        duration_frames = target_duration_frames
         duration_seconds = duration_frames / float(fps)
 
         render_asset = project.render_visual_asset or project.visual_asset
@@ -97,32 +106,43 @@ class RenderPlanBuilder:
 
     def _build_video_segments(self, project: VideoProject, visual_asset, duration_frames: int, fps: float) -> list[RenderSegment]:
         source_seconds, source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
-        source_frames = max(1, round(source_seconds * source_fps))
-        source_timeline_frames = max(1, round(source_seconds * fps))
+        # Resolve expects startFrame/endFrame in source clip frames, not timeline frames.
+        # So we loop by timeline duration, but always trim the clip using source-frame math.
+        clip_timeline_frames = max(1, round(source_seconds * fps))
+        clip_source_frames = max(1, round(source_seconds * source_fps))
         remaining = duration_frames
         record_frame = 0
         segments: list[RenderSegment] = []
 
-        while remaining > 0:
-            put_timeline_frames = min(source_timeline_frames, remaining)
-            if put_timeline_frames >= source_timeline_frames:
-                put_source_frames = source_frames
-            else:
-                put_seconds = put_timeline_frames / float(fps)
-                put_source_frames = max(1, min(source_frames, round(put_seconds * source_fps)))
+        while remaining > clip_timeline_frames:
             segments.append(
                 RenderSegment(
                     media_kind="video",
                     label=visual_asset.original_name,
                     path=visual_asset.path,
                     start_frame=0,
-                    end_frame=max(0, put_source_frames - 1),
+                    end_frame=max(0, clip_source_frames - 1),
                     record_frame=record_frame,
                     track_index=1,
                 )
             )
-            record_frame += put_timeline_frames
-            remaining -= put_timeline_frames
+            record_frame += clip_timeline_frames
+            remaining -= clip_timeline_frames
+
+        if remaining > 0:
+            remaining_seconds = remaining / float(fps)
+            partial_source_frames = max(1, min(clip_source_frames, round(remaining_seconds * source_fps)))
+            segments.append(
+                RenderSegment(
+                    media_kind="video",
+                    label=visual_asset.original_name,
+                    path=visual_asset.path,
+                    start_frame=0,
+                    end_frame=max(0, partial_source_frames - 1),
+                    record_frame=record_frame,
+                    track_index=1,
+                )
+            )
         return segments
 
     def _video_source_timing(

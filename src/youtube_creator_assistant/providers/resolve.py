@@ -76,10 +76,13 @@ class ResolveProvider:
         self._ensure_track_count(timeline, "audio", self._max_track_index(plan.audio_segments))
         self._unlock_tracks(timeline)
         self._clear_timeline_items(timeline)
+        self._ensure_timeline_is_empty(timeline)
 
         path_to_item = self._path_to_item_map(imports_folder)
         self._append_segments(media_pool, plan.visual_segments, path_to_item)
         self._append_segments(media_pool, plan.audio_segments, path_to_item)
+
+        self._validate_timeline_duration(timeline, plan)
 
         try:
             manager.SaveProject()
@@ -322,6 +325,26 @@ class ResolveProvider:
                     pass
 
     def _clear_timeline_items(self, timeline) -> None:
+        all_items = self._collect_timeline_items(timeline)
+        if not all_items:
+            return
+        delete_fn = getattr(timeline, "DeleteClips", None)
+        if callable(delete_fn):
+            try:
+                ok = delete_fn(all_items, False)
+            except Exception:
+                ok = False
+            if ok and not self._collect_timeline_items(timeline):
+                return
+        for item in reversed(all_items):
+            if not callable(delete_fn):
+                break
+            try:
+                delete_fn([item], False)
+            except Exception:
+                continue
+
+    def _collect_timeline_items(self, timeline) -> list:
         all_items = []
         for track_type in ("video", "audio", "subtitle"):
             try:
@@ -333,21 +356,15 @@ class ResolveProvider:
                     all_items.extend(timeline.GetItemListInTrack(track_type, index) or [])
                 except Exception:
                     continue
-        if not all_items:
-            return
-        delete_fn = getattr(timeline, "DeleteClips", None)
-        if callable(delete_fn):
-            try:
-                ok = delete_fn(all_items, False)
-            except Exception:
-                ok = False
-            if ok:
-                return
-        for item in all_items:
-            try:
-                item.SetClipEnabled(False)
-            except Exception:
-                pass
+        return all_items
+
+    def _ensure_timeline_is_empty(self, timeline) -> None:
+        remaining = self._collect_timeline_items(timeline)
+        if remaining:
+            raise RuntimeError(
+                f"Resolve could not fully clear the existing timeline before sync. "
+                f"{len(remaining)} item(s) are still present."
+            )
 
     def _append_segments(self, media_pool, segments: List[RenderSegment], path_to_item: dict[Path, object]) -> None:
         if not segments:
@@ -380,3 +397,13 @@ class ResolveProvider:
                 raise RuntimeError(
                     f"Resolve failed while appending {segment.media_kind} segment at recordFrame {segment.record_frame}."
                 )
+
+    def _validate_timeline_duration(self, timeline, plan: RenderPlan) -> None:
+        actual_frames = self._timeline_duration_frames(timeline)
+        expected_frames = int(plan.duration_frames)
+        if abs(actual_frames - expected_frames) > 1:
+            raise RuntimeError(
+                f"Resolve timeline duration mismatch for {plan.timeline_name}: "
+                f"expected {expected_frames} frame(s), got {actual_frames}. "
+                "The timeline was not trimmed to the exact target duration."
+            )

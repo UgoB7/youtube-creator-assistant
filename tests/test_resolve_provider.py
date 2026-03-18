@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from youtube_creator_assistant.core.config import load_settings
+from youtube_creator_assistant.core.render_plan import RenderPlan
 from youtube_creator_assistant.core.render_plan import RenderSegment
 from youtube_creator_assistant.providers.resolve import ResolveProvider
 
@@ -39,6 +40,18 @@ class _FakeMediaPool:
     def AppendToTimeline(self, instructions):
         self.append_calls.append(instructions)
         return True
+
+
+class _FakeTimeline:
+    def __init__(self, start_frame: int, end_frame: int):
+        self._start_frame = start_frame
+        self._end_frame = end_frame
+
+    def GetStartFrame(self):
+        return self._start_frame
+
+    def GetEndFrame(self):
+        return self._end_frame
 
 
 class ResolveProviderTests(unittest.TestCase):
@@ -80,6 +93,31 @@ class ResolveProviderTests(unittest.TestCase):
         self.assertEqual(media_pool.append_calls[0][0]["recordFrame"], 0)
         self.assertEqual(media_pool.append_calls[1][0]["recordFrame"], 100)
         self.assertEqual(media_pool.append_calls[0][0]["mediaType"], 1)
+
+    def test_validates_exact_timeline_duration(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/vibes.yaml")
+        provider = ResolveProvider(settings)
+        plan = RenderPlan(
+            project_id="project",
+            profile_id="vibes",
+            timeline_index=0,
+            timeline_name="vibes00",
+            fps=30.0,
+            duration_frames=300,
+            duration_seconds=10.0,
+            video_mode="image",
+            image_strategy="fixed_full_duration",
+            media_pool_folder_name="YCA Imports",
+            created_at="2026-01-01T00:00:00+00:00",
+            visual_segments=[],
+            audio_segments=[],
+        )
+
+        provider._validate_timeline_duration(_FakeTimeline(0, 299), plan)
+
+        with self.assertRaises(RuntimeError):
+            provider._validate_timeline_duration(_FakeTimeline(0, 450), plan)
 
 
 if __name__ == "__main__":
