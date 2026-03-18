@@ -30,6 +30,23 @@ openai:
   title_examples_input: ""
   devotional_examples_input: ""
 
+replicate:
+  enabled: true
+  image_model: bytedance/seedream-4
+  image_output_format: png
+  image_size: 2K
+  image_aspect_ratio: "16:9"
+  image_enhance_prompt: false
+  image_sequential_generation: disabled
+  video_model: bytedance/seedance-1.5-pro
+  video_fps: 24
+  video_duration: 12
+  video_resolution: 1080p
+  video_aspect_ratio: "16:9"
+  video_camera_fixed: true
+  video_generate_audio: false
+  video_prompt: "no camera movement. campfire. no smoke."
+
 web:
   host: 127.0.0.1
   port: 5001

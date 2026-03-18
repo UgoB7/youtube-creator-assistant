@@ -25,7 +25,15 @@ class RuntimeManager:
         ensure_dir(self.settings.paths.logs_dir)
 
     def create_project(self, visual_source: Path) -> VideoProject:
-        visual_source = visual_source.expanduser().resolve()
+        return self.create_project_from_assets(visual_source)
+
+    def create_project_from_assets(
+        self,
+        primary_visual_source: Path,
+        render_visual_source: Path | None = None,
+        source_prompt: str | None = None,
+    ) -> VideoProject:
+        visual_source = primary_visual_source.expanduser().resolve()
         if not visual_source.exists():
             raise FileNotFoundError(f"Visual source not found: {visual_source}")
 
@@ -44,6 +52,16 @@ class RuntimeManager:
         copied_visual = input_dir / f"visual{visual_source.suffix.lower()}"
         shutil.copy2(visual_source, copied_visual)
 
+        copied_render_visual = None
+        render_kind = None
+        if render_visual_source is not None:
+            render_visual_source = render_visual_source.expanduser().resolve()
+            if not render_visual_source.exists():
+                raise FileNotFoundError(f"Render visual source not found: {render_visual_source}")
+            render_kind = self._detect_visual_kind(render_visual_source)
+            copied_render_visual = input_dir / f"render_visual{render_visual_source.suffix.lower()}"
+            shutil.copy2(render_visual_source, copied_render_visual)
+
         project = VideoProject(
             project_id=project_id,
             profile_id=self.settings.profile.id,
@@ -54,6 +72,16 @@ class RuntimeManager:
                 original_name=visual_source.name,
             ),
             created_at=datetime.now(timezone.utc).isoformat(),
+            render_visual_asset=(
+                VisualAsset(
+                    kind=render_kind,
+                    path=copied_render_visual,
+                    original_name=render_visual_source.name,
+                )
+                if copied_render_visual is not None and render_visual_source is not None and render_kind is not None
+                else None
+            ),
+            source_prompt=(source_prompt.strip() if source_prompt else None),
         )
         self.save_project(project)
         return project

@@ -59,6 +59,25 @@ class OpenAISettings:
 
 
 @dataclass
+class ReplicateSettings:
+    enabled: bool = False
+    image_model: str = "bytedance/seedream-4"
+    image_output_format: str = "png"
+    image_size: str = "2K"
+    image_aspect_ratio: str = "16:9"
+    image_enhance_prompt: bool = False
+    image_sequential_generation: str = "disabled"
+    video_model: str = "bytedance/seedance-1.5-pro"
+    video_fps: int = 24
+    video_duration: int = 12
+    video_resolution: str = "1080p"
+    video_aspect_ratio: str = "16:9"
+    video_camera_fixed: bool = True
+    video_generate_audio: bool = False
+    video_prompt: str = "no camera movement. campfire. no smoke."
+
+
+@dataclass
 class WebSettings:
     host: str = "127.0.0.1"
     port: int = 5000
@@ -90,6 +109,7 @@ class Settings:
     workflow: WorkflowSettings = field(default_factory=WorkflowSettings)
     thumbnail: ThumbnailSettings = field(default_factory=ThumbnailSettings)
     openai: OpenAISettings = field(default_factory=OpenAISettings)
+    replicate: ReplicateSettings = field(default_factory=ReplicateSettings)
     web: WebSettings = field(default_factory=WebSettings)
     render: RenderSettings = field(default_factory=RenderSettings)
 
@@ -104,6 +124,7 @@ def load_settings(config_path: str | Path) -> Settings:
     workflow_data: Dict[str, Any] = data.get("workflow", {})
     thumbnail_data: Dict[str, Any] = data.get("thumbnail", {})
     openai_data: Dict[str, Any] = data.get("openai", {})
+    replicate_data: Dict[str, Any] = data.get("replicate", {})
     web_data: Dict[str, Any] = data.get("web", {})
     render_data: Dict[str, Any] = data.get("render", {})
     if "render_dir" in render_data:
@@ -131,6 +152,7 @@ def load_settings(config_path: str | Path) -> Settings:
         workflow=WorkflowSettings(**workflow_data),
         thumbnail=ThumbnailSettings(**thumbnail_data),
         openai=OpenAISettings(**openai_data),
+        replicate=ReplicateSettings(**replicate_data),
         web=WebSettings(**web_data),
         render=RenderSettings(**render_data),
     )

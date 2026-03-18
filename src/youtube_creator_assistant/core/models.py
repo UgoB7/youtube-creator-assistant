@@ -79,6 +79,8 @@ class VideoProject:
     chapters: List[ChapterEntry] = field(default_factory=list)
     description_text: Optional[str] = None
     yt_thumbnail_path: Optional[Path] = None
+    render_visual_asset: Optional[VisualAsset] = None
+    source_prompt: Optional[str] = None
     resolve_timeline_name: Optional[str] = None
     resolve_last_synced_at: Optional[str] = None
     resolve_last_error: Optional[str] = None
@@ -87,6 +89,7 @@ class VideoProject:
         payload = asdict(self)
         payload["project_dir"] = str(self.project_dir)
         payload["visual_asset"] = self.visual_asset.to_dict()
+        payload["render_visual_asset"] = self.render_visual_asset.to_dict() if self.render_visual_asset else None
         payload["audio_tracks"] = [track.to_dict() for track in self.audio_tracks]
         payload["chapters"] = [asdict(chapter) for chapter in self.chapters]
         payload["yt_thumbnail_path"] = str(self.yt_thumbnail_path) if self.yt_thumbnail_path else None
@@ -110,6 +113,8 @@ class VideoProject:
             chapters=[ChapterEntry(**item) for item in data.get("chapters", [])],
             description_text=data.get("description_text"),
             yt_thumbnail_path=Path(str(data["yt_thumbnail_path"])) if data.get("yt_thumbnail_path") else None,
+            render_visual_asset=VisualAsset.from_dict(data["render_visual_asset"]) if data.get("render_visual_asset") else None,
+            source_prompt=data.get("source_prompt"),
             resolve_timeline_name=data.get("resolve_timeline_name"),
             resolve_last_synced_at=data.get("resolve_last_synced_at"),
             resolve_last_error=data.get("resolve_last_error"),

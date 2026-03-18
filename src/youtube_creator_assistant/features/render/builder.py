@@ -51,14 +51,15 @@ class RenderPlanBuilder:
         duration_frames = max(1, record_frame)
         duration_seconds = duration_frames / float(fps)
 
-        if project.visual_asset.kind == "video":
-            visual_segments = self._build_video_segments(project, duration_frames, fps)
+        render_asset = project.render_visual_asset or project.visual_asset
+        if render_asset.kind == "video":
+            visual_segments = self._build_video_segments(render_asset, duration_frames, fps)
         else:
             visual_segments = [
                 RenderSegment(
-                    media_kind=project.visual_asset.kind,
-                    label=project.visual_asset.original_name,
-                    path=project.visual_asset.path,
+                    media_kind=render_asset.kind,
+                    label=render_asset.original_name,
+                    path=render_asset.path,
                     start_frame=0,
                     end_frame=max(0, duration_frames - 1),
                     record_frame=0,
@@ -94,8 +95,8 @@ class RenderPlanBuilder:
                 return index
         raise ValueError(f"Project {project.project_id} is missing from runtime outputs.")
 
-    def _build_video_segments(self, project: VideoProject, duration_frames: int, fps: int) -> list[RenderSegment]:
-        source_seconds = probe_video_duration_seconds(project.visual_asset.path)
+    def _build_video_segments(self, visual_asset, duration_frames: int, fps: int) -> list[RenderSegment]:
+        source_seconds = probe_video_duration_seconds(visual_asset.path)
         source_frames = max(1, round((source_seconds or (duration_frames / float(fps))) * fps))
         remaining = duration_frames
         record_frame = 0
@@ -106,8 +107,8 @@ class RenderPlanBuilder:
             segments.append(
                 RenderSegment(
                     media_kind="video",
-                    label=project.visual_asset.original_name,
-                    path=project.visual_asset.path,
+                    label=visual_asset.original_name,
+                    path=visual_asset.path,
                     start_frame=0,
                     end_frame=max(0, put_frames - 1),
                     record_frame=record_frame,

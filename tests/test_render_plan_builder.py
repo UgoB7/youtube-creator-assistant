@@ -105,6 +105,8 @@ class RenderPlanBuilderTests(unittest.TestCase):
 
         video_path = temp_root / "visual.mp4"
         video_path.write_bytes(b"fake")
+        image_path = temp_root / "image.png"
+        image_path.write_bytes(b"fake-image")
         audio_path = temp_root / "track.mp3"
         audio_path.write_bytes(b"fake")
 
@@ -112,7 +114,8 @@ class RenderPlanBuilderTests(unittest.TestCase):
             project_id="shepherd-project",
             profile_id="shepherd",
             project_dir=outputs_dir / "shepherd-project",
-            visual_asset=VisualAsset(kind="video", path=video_path, original_name="visual.mp4"),
+            visual_asset=VisualAsset(kind="image", path=image_path, original_name="image.png"),
+            render_visual_asset=VisualAsset(kind="video", path=video_path, original_name="visual.mp4"),
             created_at="2026-01-01T00:00:00+00:00",
             audio_tracks=[
                 AudioTrack(

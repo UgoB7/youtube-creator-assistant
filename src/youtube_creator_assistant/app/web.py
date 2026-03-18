@@ -39,14 +39,18 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload an image, generate title candidates, choose up to 3 titles, build the package, then optionally send it to Resolve.</p>
+      <p class="muted">Upload a visual, or for shepherd generate an image then a video with Replicate, then build the package and send it to Resolve.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
         {% endif %}
       {% endwith %}
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
-        <input type="file" name="visual" accept="{{ accept_attr }}" required>
+        <input type="file" name="visual" accept="{{ accept_attr }}">
+        {% if settings.profile.id == "shepherd" and settings.replicate.enabled %}
+          <p class="muted">Or create the shepherd visual stack with Replicate.</p>
+          <textarea name="replicate_prompt" rows="4" style="width: 100%; margin: 8px 0 12px;" placeholder="Describe the scene to generate with Replicate."></textarea>
+        {% endif %}
         <button type="submit">Create project</button>
       </form>
     </div>
@@ -75,6 +79,12 @@ PAGE = """<!doctype html>
           {% elif project.visual_asset.kind == "video" %}
             <video controls style="max-width: 100%; border-radius: 14px;">
               <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}">
+            </video>
+          {% endif %}
+          {% if project.render_visual_asset and project.render_visual_asset.kind == "video" %}
+            <p class="muted" style="margin-top: 12px;">Render visual</p>
+            <video controls style="max-width: 100%; border-radius: 14px;">
+              <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.render_visual_asset.path.name) }}">
             </video>
           {% endif %}
 
@@ -129,6 +139,9 @@ PAGE = """<!doctype html>
         </ul>
         <p><strong>Files</strong></p>
         <ul>
+          {% if project.source_prompt %}
+            <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='replicate_prompt.txt') }}">replicate_prompt.txt</a></li>
+          {% endif %}
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='chapters.txt') }}">chapters.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='yt_video_description.txt') }}">yt_video_description.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='themes.txt') }}">themes.txt</a></li>
@@ -234,15 +247,19 @@ def create_app(config_path: Path) -> Flask:
     @app.post("/projects")
     def create_project_route():
         uploaded = request.files.get("visual")
-        if not uploaded or not uploaded.filename:
-            flash("Please choose an image file.")
+        replicate_prompt = (request.form.get("replicate_prompt") or "").strip()
+        if uploaded and uploaded.filename:
+            incoming_dir = settings.paths.incoming_dir
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+            filename = secure_filename(uploaded.filename) or "upload.png"
+            temp_path = incoming_dir / filename
+            uploaded.save(temp_path)
+            project = pipeline.create_project(temp_path)
+        elif replicate_prompt and settings.profile.id == "shepherd" and settings.replicate.enabled:
+            project = pipeline.create_project_from_prompt(replicate_prompt)
+        else:
+            flash("Please upload a visual file, or provide a Replicate prompt for shepherd.")
             return redirect(url_for("index"))
-        incoming_dir = settings.paths.incoming_dir
-        incoming_dir.mkdir(parents=True, exist_ok=True)
-        filename = secure_filename(uploaded.filename) or "upload.png"
-        temp_path = incoming_dir / filename
-        uploaded.save(temp_path)
-        project = pipeline.create_project(temp_path)
         return redirect(url_for("index", project_id=project.project_id))
 
     @app.post("/projects/<project_id>/titles")

@@ -14,6 +14,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.paths.gospel_dir.name, "gospel")
         self.assertTrue(settings.render.enabled)
         self.assertEqual(settings.render.timeline_prefix, "vibes")
+        self.assertFalse(settings.replicate.enabled)
+
+    def test_load_shepherd_replicate_config(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        self.assertTrue(settings.replicate.enabled)
+        self.assertEqual(settings.replicate.image_model, "bytedance/seedream-4")
+        self.assertEqual(settings.replicate.video_model, "bytedance/seedance-1.5-pro")
 
     def test_profile_registry_has_placeholders(self):
         self.assertEqual(get_profile_definition("vibes").display_name, "Image Workflow")

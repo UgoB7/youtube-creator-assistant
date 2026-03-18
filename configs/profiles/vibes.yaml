@@ -34,6 +34,9 @@ openai:
   devotional_examples_input: |
     The Lord is My Refuge / God, I'm Letting Go - Take Control of My Life / God, I Don't Know the Way - Show Me Where to Go / My Child, Don't Worry - I Will Help You / Lord, Open My Eyes to What I've Been Tolerating and Keep Me from Falling into Sin / God Knows Your Struggles and Stands with You [1 Hour] / Spend Time With God and Find Peace [1Hour] / Quiet Your Heart and Find Peace in Time with God [1Hour] / Take a moment | Rest in God's love [1Hour] / God, I'm Done Trying to Control Everything - Lead Me / Create in Me a Clean Heart, O God - Psalms of Repentance / Lord, order my steps - Because without You I am lost
 
+replicate:
+  enabled: false
+
 web:
   host: 127.0.0.1
   port: 5000

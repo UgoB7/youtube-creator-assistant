@@ -30,6 +30,9 @@ openai:
   title_examples_input: ""
   devotional_examples_input: ""
 
+replicate:
+  enabled: false
+
 web:
   host: 127.0.0.1
   port: 5003
