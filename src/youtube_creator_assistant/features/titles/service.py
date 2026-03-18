@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Iterable, List
 
 from youtube_creator_assistant.core.config import Settings
-from youtube_creator_assistant.core.utils import dedupe_preserve_order, img_to_data_url, split_examples
+from youtube_creator_assistant.core.models import VisualAsset
+from youtube_creator_assistant.core.utils import (
+    dedupe_preserve_order,
+    extract_video_frame,
+    img_to_data_url,
+    split_examples,
+)
 from youtube_creator_assistant.providers.openai_client import OpenAIProvider
 
 
@@ -14,7 +21,7 @@ class TitleAndThemeService:
         self.settings = settings
         self.provider = provider or OpenAIProvider()
 
-    def generate_titles(self, image_path) -> List[str]:
+    def generate_titles(self, visual_asset: VisualAsset, working_dir: Path | None = None) -> List[str]:
         examples = "\n".join(
             f"- {item}" for item in split_examples(self.settings.openai.devotional_examples_input)
         )
@@ -38,7 +45,7 @@ class TitleAndThemeService:
                                 'Return only: {"titles": ["t1", "...", "t20"]}'
                             ),
                         },
-                        {"type": "input_image", "image_url": img_to_data_url(image_path)},
+                        *self._visual_prompt_parts(visual_asset, working_dir),
                     ],
                 }
             ],
@@ -51,10 +58,15 @@ class TitleAndThemeService:
             raise RuntimeError("OpenAI returned too few titles.")
         return titles[:20]
 
-    def generate_reference_preferences(self, image_path, selected_title: str) -> List[str]:
-        return self.generate_reference_preferences_for_titles(image_path, [selected_title])
+    def generate_reference_preferences(self, visual_asset: VisualAsset, selected_title: str, working_dir: Path | None = None) -> List[str]:
+        return self.generate_reference_preferences_for_titles(visual_asset, [selected_title], working_dir)
 
-    def generate_reference_preferences_for_titles(self, image_path, selected_titles: Iterable[str]) -> List[str]:
+    def generate_reference_preferences_for_titles(
+        self,
+        visual_asset: VisualAsset,
+        selected_titles: Iterable[str],
+        working_dir: Path | None = None,
+    ) -> List[str]:
         cleaned_titles = [title.strip() for title in selected_titles if isinstance(title, str) and title.strip()]
         if not cleaned_titles:
             return []
@@ -84,7 +96,7 @@ class TitleAndThemeService:
                             ),
                         },
                         {"type": "input_text", "text": f"Selected titles:\n{titles_block}"},
-                        {"type": "input_image", "image_url": img_to_data_url(image_path)},
+                        *self._visual_prompt_parts(visual_asset, working_dir),
                     ],
                 }
             ],
@@ -94,7 +106,13 @@ class TitleAndThemeService:
         cleaned = [item.strip() for item in refs if isinstance(item, str) and item.strip()]
         return dedupe_preserve_order(cleaned)[:target_count]
 
-    def generate_themes(self, image_path, selected_title: str, audio_labels: List[str]) -> List[str]:
+    def generate_themes(
+        self,
+        visual_asset: VisualAsset,
+        selected_title: str,
+        audio_labels: List[str],
+        working_dir: Path | None = None,
+    ) -> List[str]:
         tracks_text = "\n".join(f"- {label}" for label in audio_labels[:12])
         response = self.provider.client().responses.create(
             model=self.settings.openai.model,
@@ -115,7 +133,7 @@ class TitleAndThemeService:
                         },
                         {"type": "input_text", "text": f"Title: {selected_title}"},
                         {"type": "input_text", "text": f"Audio:\n{tracks_text}"},
-                        {"type": "input_image", "image_url": img_to_data_url(image_path)},
+                        *self._visual_prompt_parts(visual_asset, working_dir),
                     ],
                 }
             ],
@@ -136,3 +154,31 @@ class TitleAndThemeService:
             if not match:
                 raise RuntimeError("OpenAI response did not contain JSON.")
             return json.loads(match.group(0))
+
+    def _visual_prompt_parts(self, visual_asset: VisualAsset, working_dir: Path | None) -> List[dict]:
+        if visual_asset.kind == "image":
+            return [{"type": "input_image", "image_url": img_to_data_url(visual_asset.path)}]
+
+        preview_path = None
+        if working_dir is not None:
+            preview_path = extract_video_frame(
+                visual_asset.path,
+                working_dir / "artifacts" / "visual_preview.jpg",
+            )
+        if preview_path:
+            return [
+                {
+                    "type": "input_text",
+                    "text": f"The visual source is a video clip named {visual_asset.original_name}. Use the extracted preview frame and infer a calm devotional atmosphere from it.",
+                },
+                {"type": "input_image", "image_url": img_to_data_url(preview_path)},
+            ]
+        return [
+            {
+                "type": "input_text",
+                "text": (
+                    f"The visual source is a video clip named {visual_asset.original_name}. "
+                    "No preview frame is available, so infer a calm devotional atmosphere from the clip context and filename only."
+                ),
+            }
+        ]

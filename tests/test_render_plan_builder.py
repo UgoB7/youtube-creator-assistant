@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from youtube_creator_assistant.core.config import load_settings
 from youtube_creator_assistant.core.models import AudioTrack, VideoProject, VisualAsset
@@ -79,6 +80,63 @@ class RenderPlanBuilderTests(unittest.TestCase):
 
         self.assertEqual(plan.timeline_index, 1)
         self.assertEqual(plan.timeline_name, "vibes01")
+
+    @patch("youtube_creator_assistant.features.render.builder.probe_video_duration_seconds", return_value=10.0)
+    def test_loops_video_visual_for_shepherd(self, _mock_probe):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+
+        temp_root = root / "runtime" / "test-render-plan-shepherd"
+        outputs_dir = temp_root / "outputs"
+        incoming_dir = temp_root / "incoming"
+        images_dir = temp_root / "images"
+        logs_dir = temp_root / "logs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        settings.paths.runtime_root = temp_root
+        settings.paths.outputs_dir = outputs_dir
+        settings.paths.incoming_dir = incoming_dir
+        settings.paths.images_dir = images_dir
+        settings.paths.logs_dir = logs_dir
+        settings.workflow.fps = 30
+
+        video_path = temp_root / "visual.mp4"
+        video_path.write_bytes(b"fake")
+        audio_path = temp_root / "track.mp3"
+        audio_path.write_bytes(b"fake")
+
+        project = VideoProject(
+            project_id="shepherd-project",
+            profile_id="shepherd",
+            project_dir=outputs_dir / "shepherd-project",
+            visual_asset=VisualAsset(kind="video", path=video_path, original_name="visual.mp4"),
+            created_at="2026-01-01T00:00:00+00:00",
+            audio_tracks=[
+                AudioTrack(
+                    kind="psalm",
+                    label="Psalm 2",
+                    source_path=audio_path,
+                    copied_path=audio_path,
+                    duration_seconds=25.0,
+                )
+            ],
+        )
+
+        project.project_dir.mkdir(parents=True, exist_ok=True)
+        (project.project_dir / "project.json").write_text(
+            json.dumps(project.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+
+        runtime = RuntimeManager(settings)
+        plan = RenderPlanBuilder(settings, runtime).build_for_project(project)
+
+        self.assertEqual(plan.timeline_name, "shepherd00")
+        self.assertGreater(len(plan.visual_segments), 1)
+        self.assertTrue(all(segment.media_kind == "video" for segment in plan.visual_segments))
 
 
 if __name__ == "__main__":

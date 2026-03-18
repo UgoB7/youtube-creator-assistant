@@ -4,6 +4,7 @@ from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import VideoProject
 from youtube_creator_assistant.core.render_plan import RenderPlan, RenderSegment
 from youtube_creator_assistant.core.runtime import RuntimeManager
+from youtube_creator_assistant.core.utils import probe_video_duration_seconds
 
 
 class RenderPlanBuilder:
@@ -50,17 +51,20 @@ class RenderPlanBuilder:
         duration_frames = max(1, record_frame)
         duration_seconds = duration_frames / float(fps)
 
-        visual_segments = [
-            RenderSegment(
-                media_kind=project.visual_asset.kind,
-                label=project.visual_asset.original_name,
-                path=project.visual_asset.path,
-                start_frame=0,
-                end_frame=max(0, duration_frames - 1),
-                record_frame=0,
-                track_index=1,
-            )
-        ]
+        if project.visual_asset.kind == "video":
+            visual_segments = self._build_video_segments(project, duration_frames, fps)
+        else:
+            visual_segments = [
+                RenderSegment(
+                    media_kind=project.visual_asset.kind,
+                    label=project.visual_asset.original_name,
+                    path=project.visual_asset.path,
+                    start_frame=0,
+                    end_frame=max(0, duration_frames - 1),
+                    record_frame=0,
+                    track_index=1,
+                )
+            ]
 
         return RenderPlan(
             project_id=project.project_id,
@@ -89,3 +93,27 @@ class RenderPlanBuilder:
             if item.project_id == project.project_id:
                 return index
         raise ValueError(f"Project {project.project_id} is missing from runtime outputs.")
+
+    def _build_video_segments(self, project: VideoProject, duration_frames: int, fps: int) -> list[RenderSegment]:
+        source_seconds = probe_video_duration_seconds(project.visual_asset.path)
+        source_frames = max(1, round((source_seconds or (duration_frames / float(fps))) * fps))
+        remaining = duration_frames
+        record_frame = 0
+        segments: list[RenderSegment] = []
+
+        while remaining > 0:
+            put_frames = min(source_frames, remaining)
+            segments.append(
+                RenderSegment(
+                    media_kind="video",
+                    label=project.visual_asset.original_name,
+                    path=project.visual_asset.path,
+                    start_frame=0,
+                    end_frame=max(0, put_frames - 1),
+                    record_frame=record_frame,
+                    track_index=1,
+                )
+            )
+            record_frame += put_frames
+            remaining -= put_frames
+        return segments

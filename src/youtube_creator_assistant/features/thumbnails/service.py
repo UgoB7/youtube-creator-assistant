@@ -9,6 +9,7 @@ from PIL import Image, ImageOps
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import VideoProject
+from youtube_creator_assistant.core.utils import extract_video_frame
 
 
 class ThumbnailService:
@@ -16,10 +17,10 @@ class ThumbnailService:
         self.settings = settings
 
     def build_thumbnail(self, project: VideoProject) -> VideoProject:
-        if project.visual_asset.kind != "image":
+        image_path = self._resolve_thumbnail_source(project)
+        if image_path is None:
             return project
 
-        image_path = project.visual_asset.path
         target_dir = project.project_dir / "artifacts"
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -29,7 +30,8 @@ class ThumbnailService:
 
         if orig_bytes <= max_bytes:
             dest = target_dir / image_path.name
-            shutil.copy2(image_path, dest)
+            if image_path.resolve() != dest.resolve():
+                shutil.copy2(image_path, dest)
             project.yt_thumbnail_path = dest
             return project
 
@@ -54,9 +56,16 @@ class ThumbnailService:
             project.yt_thumbnail_path = output_path
         except Exception:
             dest = target_dir / image_path.name
-            shutil.copy2(image_path, dest)
+            if image_path.resolve() != dest.resolve():
+                shutil.copy2(image_path, dest)
             project.yt_thumbnail_path = dest
         return project
+
+    def _resolve_thumbnail_source(self, project: VideoProject) -> Optional[Path]:
+        if project.visual_asset.kind == "image":
+            return project.visual_asset.path
+        preview_path = project.project_dir / "artifacts" / "thumbnail_preview.jpg"
+        return extract_video_frame(project.visual_asset.path, preview_path)
 
     @staticmethod
     def _save_jpeg(image: Image.Image, quality: int) -> bytes:

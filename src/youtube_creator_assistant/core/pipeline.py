@@ -36,7 +36,7 @@ class ContentPipeline:
 
     def generate_titles(self, project_id: str):
         project = self.runtime.load_project(project_id)
-        project.title_candidates = self.title_service.generate_titles(project.visual_asset.path)
+        project.title_candidates = self.title_service.generate_titles(project.visual_asset, project.project_dir)
         project.status = "titles_generated"
         (project.project_dir / "titles.json").write_text(
             json.dumps(project.title_candidates, indent=2),
@@ -83,8 +83,9 @@ class ContentPipeline:
         project.selected_titles = cleaned_titles
         project.selected_title = cleaned_titles[0]
         project.preferred_references = self.title_service.generate_reference_preferences_for_titles(
-            project.visual_asset.path,
+            project.visual_asset,
             project.selected_titles or [project.selected_title],
+            project.project_dir,
         )
         (project.project_dir / "preferred_references.txt").write_text(
             "\n".join(project.preferred_references),
@@ -92,9 +93,10 @@ class ContentPipeline:
         )
         self.audio_service.build_for_project(project, project.preferred_references)
         project.themes = self.title_service.generate_themes(
-            project.visual_asset.path,
+            project.visual_asset,
             project.selected_title,
             [track.label for track in project.audio_tracks],
+            project.project_dir,
         )
         (project.project_dir / "themes.txt").write_text(
             "\n".join(project.themes),

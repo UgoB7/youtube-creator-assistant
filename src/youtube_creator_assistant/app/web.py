@@ -46,7 +46,7 @@ PAGE = """<!doctype html>
         {% endif %}
       {% endwith %}
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
-        <input type="file" name="visual" accept=".png,.jpg,.jpeg,.webp" required>
+        <input type="file" name="visual" accept="{{ accept_attr }}" required>
         <button type="submit">Create project</button>
       </form>
     </div>
@@ -72,6 +72,10 @@ PAGE = """<!doctype html>
           <p class="muted">Status: {{ project.status }}</p>
           {% if project.visual_asset.kind == "image" %}
             <img src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}" alt="visual">
+          {% elif project.visual_asset.kind == "video" %}
+            <video controls style="max-width: 100%; border-radius: 14px;">
+              <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}">
+            </video>
           {% endif %}
 
           <form method="post" action="{{ url_for('generate_titles_route', project_id=project.project_id) }}" style="margin-top: 12px;">
@@ -197,6 +201,11 @@ def create_app(config_path: Path) -> Flask:
     pipeline = ContentPipeline(settings)
     app = Flask(__name__)
     app.secret_key = "youtube-creator-assistant-dev"
+    accept_attr = {
+        "image": ".png,.jpg,.jpeg,.webp",
+        "video": ".mp4,.mov,.m4v,.mkv,.avi,.mpeg,.mpg",
+        "image_or_video": ".png,.jpg,.jpeg,.webp,.mp4,.mov,.m4v,.mkv,.avi,.mpeg,.mpg",
+    }.get(settings.profile.visual_input_mode, ".png,.jpg,.jpeg,.webp")
 
     def _get_project(project_id: str | None):
         if not project_id:
@@ -215,6 +224,7 @@ def create_app(config_path: Path) -> Flask:
             settings=settings,
             projects=pipeline.runtime.list_projects(),
             project=project,
+            accept_attr=accept_attr,
         )
 
     @app.get("/projects/<project_id>")

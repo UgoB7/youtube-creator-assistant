@@ -4,6 +4,7 @@ import base64
 import hashlib
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Iterable, List
 
@@ -69,3 +70,55 @@ def stable_seed(*parts: object) -> int:
         hasher.update(str(part).encode("utf-8"))
         hasher.update(b"::")
     return int.from_bytes(hasher.digest()[:8], "big", signed=False)
+
+
+def probe_video_duration_seconds(path: Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        output = subprocess.check_output(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(path),
+            ],
+            stderr=subprocess.STDOUT,
+        )
+        return float(output.decode("utf-8").strip())
+    except Exception:
+        return None
+
+
+def extract_video_frame(video_path: Path, output_path: Path, timestamp_seconds: float = 0.0) -> Path | None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-ss",
+                f"{timestamp_seconds:.3f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                str(output_path),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if output_path.exists() and output_path.stat().st_size > 0:
+            return output_path
+    except Exception:
+        return None
+    return None
