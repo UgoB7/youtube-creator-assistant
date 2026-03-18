@@ -1,0 +1,14 @@
+.env
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.venv/
+dist/
+build/
+*.egg-info/
+runtime/
+assets/audio/gospel/
+assets/audio/psalms/

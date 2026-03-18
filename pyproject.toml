@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-creator-assistant"
+version = "0.1.0"
+description = "Modular YouTube creator assistant."
+requires-python = ">=3.10"
+dependencies = [
+  "Flask>=3.0",
+  "mutagen>=1.47",
+  "openai>=1.0.0",
+  "Pillow>=10.0",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+yca = "youtube_creator_assistant.app.cli:main"
+yca-web = "youtube_creator_assistant.app.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
