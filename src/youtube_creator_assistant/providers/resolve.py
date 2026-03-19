@@ -8,6 +8,7 @@ from typing import Iterable, List, Optional
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.render_plan import RenderPlan, RenderSegment
+from youtube_creator_assistant.core.utils import make_still_video
 
 
 @dataclass
@@ -64,7 +65,27 @@ class ResolveProvider:
         if self.settings.render.clean_media_pool_imports:
             self._clear_import_folder(media_pool, imports_folder)
 
-        media_paths = self._collect_required_paths(plan)
+        prepared_visual_segments = self._prepare_visual_segments(plan)
+        prepared_plan = RenderPlan(
+            project_id=plan.project_id,
+            profile_id=plan.profile_id,
+            timeline_index=plan.timeline_index,
+            timeline_name=plan.timeline_name,
+            fps=plan.fps,
+            duration_frames=plan.duration_frames,
+            duration_seconds=plan.duration_seconds,
+            video_mode=plan.video_mode,
+            append_mode=plan.append_mode,
+            audio_strategy=plan.audio_strategy,
+            video_strategy=plan.video_strategy,
+            image_strategy=plan.image_strategy,
+            media_pool_folder_name=plan.media_pool_folder_name,
+            created_at=plan.created_at,
+            visual_segments=prepared_visual_segments,
+            audio_segments=plan.audio_segments,
+        )
+
+        media_paths = self._collect_required_paths(prepared_plan)
         imported_items = self._import_required_media(media_pool, imports_folder, media_paths)
 
         try:
@@ -72,17 +93,18 @@ class ResolveProvider:
         except Exception:
             pass
 
-        self._ensure_track_count(timeline, "video", self._max_track_index(plan.visual_segments))
-        self._ensure_track_count(timeline, "audio", self._max_track_index(plan.audio_segments))
+        self._ensure_track_count(timeline, "video", self._max_track_index(prepared_plan.visual_segments))
+        self._ensure_track_count(timeline, "audio", self._max_track_index(prepared_plan.audio_segments))
         self._unlock_tracks(timeline)
         self._clear_timeline_items(timeline)
         self._ensure_timeline_is_empty(timeline)
 
         path_to_item = self._path_to_item_map(imports_folder)
-        self._append_segments(media_pool, plan.visual_segments, path_to_item)
-        self._append_segments(media_pool, plan.audio_segments, path_to_item)
+        visual_items = self._append_segments(media_pool, prepared_plan.visual_segments, path_to_item, prepared_plan.append_mode)
+        self._validate_visual_contiguity(visual_items)
+        self._append_segments(media_pool, prepared_plan.audio_segments, path_to_item, prepared_plan.append_mode)
 
-        self._validate_timeline_duration(timeline, plan)
+        self._validate_timeline_duration(timeline, prepared_plan)
 
         try:
             manager.SaveProject()
@@ -240,6 +262,42 @@ class ResolveProvider:
         required = {segment.path.expanduser().resolve() for segment in (plan.visual_segments + plan.audio_segments)}
         return sorted(required)
 
+    def _prepare_visual_segments(self, plan: RenderPlan) -> list[RenderSegment]:
+        prepared: list[RenderSegment] = []
+        cache_dir = self.settings.paths.runtime_root / "render_cache" / plan.project_id
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for index, segment in enumerate(plan.visual_segments, start=1):
+            if segment.media_kind != "image":
+                prepared.append(segment)
+                continue
+            if plan.image_strategy != "fixed_full_duration":
+                prepared.append(segment)
+                continue
+            duration_frames = int(segment.timeline_duration_frames or 1)
+            duration_seconds = duration_frames / float(plan.fps)
+            output_path = cache_dir / f"segment_{index:03d}_{segment.path.stem}.mp4"
+            make_still_video(
+                image_path=segment.path,
+                output_path=output_path,
+                seconds=duration_seconds,
+                fps=plan.fps,
+                width=self.settings.render.width,
+                height=self.settings.render.height,
+            )
+            prepared.append(
+                RenderSegment(
+                    media_kind="video",
+                    label=segment.label,
+                    path=output_path,
+                    start_frame=0,
+                    end_frame=max(0, duration_frames - 1),
+                    record_frame=segment.record_frame,
+                    track_index=segment.track_index,
+                    timeline_duration_frames=duration_frames,
+                )
+            )
+        return prepared
+
     def _import_required_media(self, media_pool, imports_folder, media_paths: Iterable[Path]) -> list:
         current_folder = media_pool.GetCurrentFolder()
         try:
@@ -366,13 +424,20 @@ class ResolveProvider:
                 f"{len(remaining)} item(s) are still present."
             )
 
-    def _append_segments(self, media_pool, segments: List[RenderSegment], path_to_item: dict[Path, object]) -> None:
+    def _append_segments(
+        self,
+        media_pool,
+        segments: List[RenderSegment],
+        path_to_item: dict[Path, object],
+        append_mode: str = "batch",
+    ) -> list:
         if not segments:
-            return
+            return []
         ordered_segments = sorted(
             segments,
             key=lambda segment: (segment.track_index, segment.record_frame, segment.start_frame, segment.end_frame),
         )
+        instructions = []
         for segment in ordered_segments:
             resolved_path = segment.path.expanduser().resolve()
             media_item = path_to_item.get(resolved_path)
@@ -383,19 +448,60 @@ class ResolveProvider:
                 )
             if not media_item:
                 raise RuntimeError(f"Imported media item is missing in Resolve for {segment.path}.")
-            media_type = 2 if segment.media_kind == "audio" else 1
             instruction = {
                 "mediaPoolItem": media_item,
                 "startFrame": segment.start_frame,
                 "endFrame": segment.end_frame,
                 "recordFrame": segment.record_frame,
                 "trackIndex": segment.track_index,
-                "mediaType": media_type,
             }
-            ok = media_pool.AppendToTimeline([instruction])
-            if not ok:
+            if segment.media_kind == "audio":
+                instruction["mediaType"] = 2
+            instructions.append(instruction)
+
+        if append_mode == "single":
+            appended_items = []
+            for instruction in instructions:
+                result = media_pool.AppendToTimeline([instruction])
+                ok = bool(result)
+                if not ok:
+                    raise RuntimeError(
+                        f"Resolve failed while appending segment at recordFrame {instruction['recordFrame']}."
+                    )
+                appended_items.extend(result or [])
+            return appended_items
+
+        result = media_pool.AppendToTimeline(instructions)
+        if not result:
+            raise RuntimeError("Resolve failed while appending timeline segments in batch mode.")
+        return list(result or [])
+
+    def _validate_visual_contiguity(self, timeline_items: list) -> None:
+        if len(timeline_items) < 2:
+            return
+        items = []
+        for item in timeline_items:
+            try:
+                track_type, _track_index = item.GetTrackTypeAndIndex()
+            except Exception:
+                track_type = None
+            if track_type not in {None, "video"}:
+                continue
+            try:
+                start = float(item.GetStart(False))
+                duration = float(item.GetDuration(False))
+            except Exception:
+                continue
+            items.append((start, duration))
+        items.sort(key=lambda pair: pair[0])
+        for index in range(1, len(items)):
+            prev_start, prev_duration = items[index - 1]
+            current_start, _current_duration = items[index]
+            expected_start = prev_start + prev_duration
+            if abs(current_start - expected_start) > 0.01:
                 raise RuntimeError(
-                    f"Resolve failed while appending {segment.media_kind} segment at recordFrame {segment.record_frame}."
+                    "Resolve inserted a gap between video clips after AppendToTimeline. "
+                    "The timeline was not rebuilt contiguously."
                 )
 
     def _validate_timeline_duration(self, timeline, plan: RenderPlan) -> None:

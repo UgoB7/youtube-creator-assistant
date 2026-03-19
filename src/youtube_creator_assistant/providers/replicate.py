@@ -17,7 +17,11 @@ class ReplicateProvider:
 
     def generate_image_bytes(self, prompt: str) -> bytes:
         payload = {
+            "width": int(self.settings.replicate.image_width),
+            "height": int(self.settings.replicate.image_height),
             "prompt": prompt,
+            "max_images": int(self.settings.replicate.image_max_images),
+            "image_input": [],
             "size": self.settings.replicate.image_size,
             "aspect_ratio": self.settings.replicate.image_aspect_ratio,
             "enhance_prompt": self.settings.replicate.image_enhance_prompt,

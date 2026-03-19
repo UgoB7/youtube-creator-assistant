@@ -139,7 +139,8 @@ class RenderPlanBuilderTests(unittest.TestCase):
         self.assertEqual(plan.duration_frames, 300)
         self.assertEqual(plan.audio_segments[-1].record_frame, 0)
         self.assertEqual(plan.audio_segments[-1].end_frame, 299)
-        self.assertEqual(plan.visual_segments[-1].end_frame, 299)
+        self.assertEqual(plan.visual_segments[-1].end_frame, 0)
+        self.assertEqual(plan.visual_segments[-1].timeline_duration_frames, 300)
 
     @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(10.0, 24.0))
     def test_loops_video_visual_for_shepherd(self, _mock_probe):
@@ -264,6 +265,140 @@ class RenderPlanBuilderTests(unittest.TestCase):
         self.assertEqual(plan.visual_segments[0].end_frame, 287)
         self.assertEqual(plan.visual_segments[1].record_frame, 288)
 
+    @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(12.041667, 24.0))
+    def test_prefers_stored_video_timing_when_configured(self, _mock_probe):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.render.video_timing_source = "metadata_first"
+
+        temp_root = root / "runtime" / "test-render-plan-metadata-first"
+        outputs_dir = temp_root / "outputs"
+        incoming_dir = temp_root / "incoming"
+        images_dir = temp_root / "images"
+        logs_dir = temp_root / "logs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        settings.paths.runtime_root = temp_root
+        settings.paths.outputs_dir = outputs_dir
+        settings.paths.incoming_dir = incoming_dir
+        settings.paths.images_dir = images_dir
+        settings.paths.logs_dir = logs_dir
+        settings.workflow.target_duration_tc = "0:00:24:00"
+        settings.workflow.fps = 24
+
+        video_path = temp_root / "visual.mp4"
+        video_path.write_bytes(b"fake")
+        image_path = temp_root / "image.png"
+        image_path.write_bytes(b"fake-image")
+        audio_path = temp_root / "track.mp3"
+        audio_path.write_bytes(b"fake")
+
+        project = VideoProject(
+            project_id="metadata-first-project",
+            profile_id="shepherd",
+            project_dir=outputs_dir / "metadata-first-project",
+            visual_asset=VisualAsset(kind="image", path=image_path, original_name="image.png"),
+            render_visual_asset=VisualAsset(
+                kind="video",
+                path=video_path,
+                original_name="visual.mp4",
+                duration_seconds=12.0,
+                fps=24.0,
+            ),
+            created_at="2026-01-01T00:00:00+00:00",
+            audio_tracks=[
+                AudioTrack(
+                    kind="psalm",
+                    label="Psalm 2",
+                    source_path=audio_path,
+                    copied_path=audio_path,
+                    duration_seconds=24.0,
+                )
+            ],
+        )
+
+        project.project_dir.mkdir(parents=True, exist_ok=True)
+        (project.project_dir / "project.json").write_text(
+            json.dumps(project.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+
+        runtime = RuntimeManager(settings)
+        plan = RenderPlanBuilder(settings, runtime).build_for_project(project)
+
+        self.assertEqual(plan.visual_segments[0].timeline_duration_frames, 288)
+        self.assertEqual(plan.visual_segments[1].record_frame, 288)
+
+    @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(12.0, 24.0))
+    def test_matches_legacy_shepherd_timeline_frame_looping(self, _mock_probe):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+
+        temp_root = root / "runtime" / "test-render-plan-legacy-looping"
+        outputs_dir = temp_root / "outputs"
+        incoming_dir = temp_root / "incoming"
+        images_dir = temp_root / "images"
+        logs_dir = temp_root / "logs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        settings.paths.runtime_root = temp_root
+        settings.paths.outputs_dir = outputs_dir
+        settings.paths.incoming_dir = incoming_dir
+        settings.paths.images_dir = images_dir
+        settings.paths.logs_dir = logs_dir
+        settings.workflow.target_duration_tc = "0:00:30:00"
+        settings.workflow.fps = 30
+
+        video_path = temp_root / "visual.mp4"
+        video_path.write_bytes(b"fake")
+        image_path = temp_root / "image.png"
+        image_path.write_bytes(b"fake-image")
+        audio_path = temp_root / "track.mp3"
+        audio_path.write_bytes(b"fake")
+
+        project = VideoProject(
+            project_id="legacy-looping-project",
+            profile_id="shepherd",
+            project_dir=outputs_dir / "legacy-looping-project",
+            visual_asset=VisualAsset(kind="image", path=image_path, original_name="image.png"),
+            render_visual_asset=VisualAsset(
+                kind="video",
+                path=video_path,
+                original_name="visual.mp4",
+                duration_seconds=12.0,
+                fps=24.0,
+            ),
+            created_at="2026-01-01T00:00:00+00:00",
+            audio_tracks=[
+                AudioTrack(
+                    kind="psalm",
+                    label="Psalm 2",
+                    source_path=audio_path,
+                    copied_path=audio_path,
+                    duration_seconds=30.0,
+                )
+            ],
+        )
+
+        project.project_dir.mkdir(parents=True, exist_ok=True)
+        (project.project_dir / "project.json").write_text(
+            json.dumps(project.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+
+        runtime = RuntimeManager(settings)
+        plan = RenderPlanBuilder(settings, runtime).build_for_project(project)
+
+        self.assertEqual(plan.visual_segments[0].end_frame, 359)
+        self.assertEqual(plan.visual_segments[0].record_frame, 0)
+        self.assertEqual(plan.visual_segments[1].record_frame, 360)
+
     @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(12.0, 24.0))
     def test_uses_source_frames_for_video_trim_when_timeline_fps_differs(self, _mock_probe):
         root = Path(__file__).resolve().parents[1]
@@ -319,7 +454,7 @@ class RenderPlanBuilderTests(unittest.TestCase):
         runtime = RuntimeManager(settings)
         plan = RenderPlanBuilder(settings, runtime).build_for_project(project, fps_override=30.0)
 
-        self.assertEqual(plan.visual_segments[0].end_frame, 287)
+        self.assertEqual(plan.visual_segments[0].end_frame, 359)
         self.assertEqual(plan.visual_segments[1].record_frame, 360)
 
     @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(None, None))

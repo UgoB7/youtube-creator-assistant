@@ -23,9 +23,13 @@ PAGE = """<!doctype html>
     .shell { max-width: 1120px; margin: 0 auto; }
     .card { background: white; border: 1px solid #e5e7eb; border-radius: 18px; padding: 18px; margin-bottom: 18px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06); }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+    .candidate { border: 1px solid #e5e7eb; border-radius: 14px; padding: 10px; background: #fcfcfd; }
+    .candidate img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
     .muted { color: #6b7280; font-size: 14px; }
     .flash { color: #991b1b; margin-bottom: 12px; }
     img { max-width: 100%; border-radius: 14px; }
+    video { width: 100%; border-radius: 14px; background: #111827; }
     button { border: none; border-radius: 10px; padding: 10px 14px; cursor: pointer; background: #111827; color: white; }
     button.secondary { background: #d97706; }
     input[type=file] { margin-bottom: 12px; }
@@ -39,7 +43,7 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload a visual, or for shepherd let the app generate an image prompt with the LLM from the local seed list, then create an image and a video with Replicate.</p>
+      <p class="muted">Upload a visual, or for shepherd generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -48,11 +52,29 @@ PAGE = """<!doctype html>
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
         <input type="file" name="visual" accept="{{ accept_attr }}">
         {% if settings.profile.id == "shepherd" and settings.replicate.enabled %}
-          <p class="muted">If you leave the file empty, shepherd will auto-generate a prompt from the local prompt seeds, then run Replicate image -> video.</p>
+          <p class="muted">If you leave the file empty, shepherd will generate {{ settings.replicate.candidate_count }} candidate images first, then you can pick one.</p>
         {% endif %}
         <button type="submit">Create project</button>
       </form>
     </div>
+
+    {% if candidate_batch %}
+      <div class="card">
+        <h2>Shepherd Candidates</h2>
+        <p class="muted">Batch {{ candidate_batch.batch_id }}. Choose one image to create the video and the project.</p>
+        <div class="gallery">
+          {% for candidate in candidate_batch.candidates %}
+            <form class="candidate" method="post" action="{{ url_for('select_candidate_route', batch_id=candidate_batch.batch_id) }}">
+              <img src="{{ url_for('candidate_batch_file', batch_id=candidate_batch.batch_id, filename=candidate.image_path.name) }}" alt="{{ candidate.candidate_id }}">
+              <p><strong>{{ candidate.candidate_id }}</strong></p>
+              <p class="muted">{{ candidate.prompt }}</p>
+              <input type="hidden" name="candidate_id" value="{{ candidate.candidate_id }}">
+              <button type="submit">Use this image</button>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
 
     <div class="grid">
       <div class="card">
@@ -76,15 +98,21 @@ PAGE = """<!doctype html>
           {% if project.visual_asset.kind == "image" %}
             <img src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}" alt="visual">
           {% elif project.visual_asset.kind == "video" %}
-            <video controls style="max-width: 100%; border-radius: 14px;">
+            <p class="muted">Visual preview (loop)</p>
+            <video controls loop autoplay muted playsinline preload="metadata">
               <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}">
             </video>
           {% endif %}
           {% if project.render_visual_asset and project.render_visual_asset.kind == "video" %}
-            <p class="muted" style="margin-top: 12px;">Render visual</p>
-            <video controls style="max-width: 100%; border-radius: 14px;">
+            <p class="muted" style="margin-top: 12px;">Render visual preview (loop)</p>
+            <video controls loop autoplay muted playsinline preload="metadata">
               <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.render_visual_asset.path.name) }}">
             </video>
+          {% endif %}
+          {% if settings.replicate.enabled and project.visual_asset.kind == "image" %}
+            <form method="post" action="{{ url_for('regenerate_render_video_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+              <button class="secondary" type="submit">Regenerate video</button>
+            </form>
           {% endif %}
 
           <form method="post" action="{{ url_for('generate_titles_route', project_id=project.project_id) }}" style="margin-top: 12px;">
@@ -227,15 +255,25 @@ def create_app(config_path: Path) -> Flask:
         except FileNotFoundError:
             return None
 
+    def _get_batch(batch_id: str | None):
+        if not batch_id:
+            return None
+        try:
+            return pipeline.load_shepherd_candidate_batch(batch_id)
+        except FileNotFoundError:
+            return None
+
     @app.get("/")
     def index():
         current_id = request.args.get("project_id", "")
+        batch_id = request.args.get("batch_id", "")
         project = _get_project(current_id)
         return render_template_string(
             PAGE,
             settings=settings,
             projects=pipeline.runtime.list_projects(),
             project=project,
+            candidate_batch=_get_batch(batch_id),
             accept_attr=accept_attr,
         )
 
@@ -254,16 +292,38 @@ def create_app(config_path: Path) -> Flask:
             uploaded.save(temp_path)
             project = pipeline.create_project(temp_path)
         elif settings.profile.id == "shepherd" and settings.replicate.enabled:
-            project = pipeline.create_project_from_seed_prompts()
+            batch = pipeline.create_shepherd_candidate_batch()
+            flash(f"Generated {len(batch.candidates)} shepherd image candidates. Choose one to continue.")
+            return redirect(url_for("index", batch_id=batch.batch_id))
         else:
             flash("Please upload a visual file, or use shepherd with Replicate enabled.")
             return redirect(url_for("index"))
+        return redirect(url_for("index", project_id=project.project_id))
+
+    @app.post("/candidate-batches/<batch_id>/select")
+    def select_candidate_route(batch_id: str):
+        candidate_id = (request.form.get("candidate_id") or "").strip()
+        if not candidate_id:
+            flash("Please choose a candidate image.")
+            return redirect(url_for("index", batch_id=batch_id))
+        project = pipeline.create_project_from_shepherd_candidate(batch_id, candidate_id)
+        flash("Candidate selected. The shepherd project has been created.")
         return redirect(url_for("index", project_id=project.project_id))
 
     @app.post("/projects/<project_id>/titles")
     def generate_titles_route(project_id: str):
         pipeline.generate_titles(project_id)
         return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/regenerate-video")
+    def regenerate_render_video_route(project_id: str):
+        try:
+            project = pipeline.regenerate_project_render_video(project_id)
+            flash("Render video regenerated.")
+            return redirect(url_for("index", project_id=project.project_id))
+        except Exception as exc:
+            flash(str(exc))
+            return redirect(url_for("index", project_id=project_id))
 
     @app.post("/projects/<project_id>/build")
     def build_package_route(project_id: str):
@@ -296,6 +356,18 @@ def create_app(config_path: Path) -> Flask:
         project_dir = settings.paths.outputs_dir / project_id
         target = (project_dir / relpath).resolve()
         if project_dir.resolve() not in target.parents and target != project_dir.resolve():
+            abort(404)
+        if not target.exists() or not target.is_file():
+            abort(404)
+        return send_from_directory(target.parent, target.name)
+
+    @app.get("/candidate-batches/<batch_id>/files/<path:filename>")
+    def candidate_batch_file(batch_id: str, filename: str):
+        batch = _get_batch(batch_id)
+        if batch is None:
+            abort(404)
+        target = (batch.batch_dir / filename).resolve()
+        if batch.batch_dir.resolve() not in target.parents and target != batch.batch_dir.resolve():
             abort(404)
         if not target.exists() or not target.is_file():
             abort(404)

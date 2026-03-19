@@ -15,6 +15,11 @@ class RenderSegment:
     end_frame: int
     record_frame: int
     track_index: int = 1
+    timeline_duration_frames: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.timeline_duration_frames is None:
+            self.timeline_duration_frames = max(1, self.end_frame - self.start_frame + 1)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -25,6 +30,7 @@ class RenderSegment:
             "end_frame": self.end_frame,
             "record_frame": self.record_frame,
             "track_index": self.track_index,
+            "timeline_duration_frames": self.timeline_duration_frames,
         }
 
     @classmethod
@@ -37,6 +43,11 @@ class RenderSegment:
             end_frame=int(data["end_frame"]),
             record_frame=int(data["record_frame"]),
             track_index=int(data.get("track_index", 1)),
+            timeline_duration_frames=(
+                int(data["timeline_duration_frames"])
+                if data.get("timeline_duration_frames") is not None
+                else None
+            ),
         )
 
 
@@ -53,6 +64,9 @@ class RenderPlan:
     image_strategy: str
     media_pool_folder_name: str
     created_at: str
+    append_mode: str = "batch"
+    audio_strategy: str = "cut_to_duration"
+    video_strategy: str = "loop_to_duration"
     visual_segments: List[RenderSegment] = field(default_factory=list)
     audio_segments: List[RenderSegment] = field(default_factory=list)
 
@@ -66,6 +80,9 @@ class RenderPlan:
             "duration_frames": self.duration_frames,
             "duration_seconds": self.duration_seconds,
             "video_mode": self.video_mode,
+            "append_mode": self.append_mode,
+            "audio_strategy": self.audio_strategy,
+            "video_strategy": self.video_strategy,
             "image_strategy": self.image_strategy,
             "media_pool_folder_name": self.media_pool_folder_name,
             "created_at": self.created_at,
@@ -84,6 +101,9 @@ class RenderPlan:
             duration_frames=int(data["duration_frames"]),
             duration_seconds=float(data["duration_seconds"]),
             video_mode=str(data["video_mode"]),
+            append_mode=str(data.get("append_mode", "batch")),
+            audio_strategy=str(data.get("audio_strategy", "cut_to_duration")),
+            video_strategy=str(data.get("video_strategy", "loop_to_duration")),
             image_strategy=str(data["image_strategy"]),
             media_pool_folder_name=str(data["media_pool_folder_name"]),
             created_at=str(data["created_at"]),

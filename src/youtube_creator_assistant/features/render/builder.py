@@ -24,6 +24,34 @@ class RenderPlanBuilder:
             round(tc_to_seconds(self.settings.workflow.target_duration_tc, int(round(fps))) * fps),
         )
 
+        audio_segments = self._build_audio_segments(project, target_duration_frames, fps)
+
+        duration_frames = target_duration_frames
+        duration_seconds = duration_frames / float(fps)
+
+        render_asset = project.render_visual_asset or project.visual_asset
+        visual_segments = self._build_visual_segments(project, render_asset, duration_frames, fps)
+
+        return RenderPlan(
+            project_id=project.project_id,
+            profile_id=project.profile_id,
+            timeline_index=timeline_index,
+            timeline_name=timeline_name,
+            fps=fps,
+            duration_frames=duration_frames,
+            duration_seconds=duration_seconds,
+            video_mode=self.settings.render.video_mode,
+            append_mode=self.settings.render.append_mode,
+            audio_strategy=self.settings.render.audio_strategy,
+            video_strategy=self.settings.render.video_strategy,
+            image_strategy=self.settings.render.image_strategy,
+            media_pool_folder_name=self.settings.render.media_pool_folder_name,
+            created_at=project.created_at,
+            visual_segments=visual_segments,
+            audio_segments=audio_segments,
+        )
+
+    def _build_audio_segments(self, project: VideoProject, target_duration_frames: int, fps: float) -> list[RenderSegment]:
         audio_segments: list[RenderSegment] = []
         record_frame = 0
         remaining_frames = target_duration_frames
@@ -52,45 +80,31 @@ class RenderPlanBuilder:
                     end_frame=end_frame,
                     record_frame=record_frame,
                     track_index=1,
+                    timeline_duration_frames=put_frames,
                 )
             )
             record_frame += put_frames
             remaining_frames -= put_frames
+        return audio_segments
 
-        duration_frames = target_duration_frames
-        duration_seconds = duration_frames / float(fps)
-
-        render_asset = project.render_visual_asset or project.visual_asset
+    def _build_visual_segments(self, project: VideoProject, render_asset, duration_frames: int, fps: float) -> list[RenderSegment]:
         if render_asset.kind == "video":
-            visual_segments = self._build_video_segments(project, render_asset, duration_frames, fps)
-        else:
-            visual_segments = [
-                RenderSegment(
-                    media_kind=render_asset.kind,
-                    label=render_asset.original_name,
-                    path=render_asset.path,
-                    start_frame=0,
-                    end_frame=max(0, duration_frames - 1),
-                    record_frame=0,
-                    track_index=1,
-                )
-            ]
+            return self._build_video_segments(project, render_asset, duration_frames, fps)
+        return self._build_image_segments(render_asset, duration_frames)
 
-        return RenderPlan(
-            project_id=project.project_id,
-            profile_id=project.profile_id,
-            timeline_index=timeline_index,
-            timeline_name=timeline_name,
-            fps=fps,
-            duration_frames=duration_frames,
-            duration_seconds=duration_seconds,
-            video_mode=self.settings.render.video_mode,
-            image_strategy=self.settings.render.image_strategy,
-            media_pool_folder_name=self.settings.render.media_pool_folder_name,
-            created_at=project.created_at,
-            visual_segments=visual_segments,
-            audio_segments=audio_segments,
-        )
+    def _build_image_segments(self, render_asset, duration_frames: int) -> list[RenderSegment]:
+        return [
+            RenderSegment(
+                media_kind=render_asset.kind,
+                label=render_asset.original_name,
+                path=render_asset.path,
+                start_frame=0,
+                end_frame=0,
+                record_frame=0,
+                track_index=1,
+                timeline_duration_frames=duration_frames,
+            )
+        ]
 
     def _timeline_index_for_project(self, project: VideoProject) -> int:
         chronological = [
@@ -105,42 +119,41 @@ class RenderPlanBuilder:
         raise ValueError(f"Project {project.project_id} is missing from runtime outputs.")
 
     def _build_video_segments(self, project: VideoProject, visual_asset, duration_frames: int, fps: float) -> list[RenderSegment]:
-        source_seconds, source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
-        # Resolve expects startFrame/endFrame in source clip frames, not timeline frames.
-        # So we loop by timeline duration, but always trim the clip using source-frame math.
-        clip_timeline_frames = max(1, round(source_seconds * fps))
-        clip_source_frames = max(1, round(source_seconds * source_fps))
+        source_seconds, _source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
+        # Match the legacy Shepherd behavior: build subclips in timeline-frame units,
+        # then append them contiguously in one batch.
+        clip_frames = max(1, round(source_seconds * fps))
         remaining = duration_frames
         record_frame = 0
         segments: list[RenderSegment] = []
 
-        while remaining > clip_timeline_frames:
+        while remaining > clip_frames:
             segments.append(
                 RenderSegment(
                     media_kind="video",
                     label=visual_asset.original_name,
                     path=visual_asset.path,
                     start_frame=0,
-                    end_frame=max(0, clip_source_frames - 1),
+                    end_frame=max(0, clip_frames - 1),
                     record_frame=record_frame,
                     track_index=1,
+                    timeline_duration_frames=clip_frames,
                 )
             )
-            record_frame += clip_timeline_frames
-            remaining -= clip_timeline_frames
+            record_frame += clip_frames
+            remaining -= clip_frames
 
         if remaining > 0:
-            remaining_seconds = remaining / float(fps)
-            partial_source_frames = max(1, min(clip_source_frames, round(remaining_seconds * source_fps)))
             segments.append(
                 RenderSegment(
                     media_kind="video",
                     label=visual_asset.original_name,
                     path=visual_asset.path,
                     start_frame=0,
-                    end_frame=max(0, partial_source_frames - 1),
+                    end_frame=max(0, remaining - 1),
                     record_frame=record_frame,
                     track_index=1,
+                    timeline_duration_frames=remaining,
                 )
             )
         return segments
@@ -155,8 +168,12 @@ class RenderPlanBuilder:
         stored_seconds = getattr(visual_asset, "duration_seconds", None)
         stored_fps = getattr(visual_asset, "fps", None)
         probed_seconds, probed_fps = probe_video_metadata(visual_asset.path)
-        source_seconds = probed_seconds if probed_seconds is not None else stored_seconds
-        source_fps = probed_fps if probed_fps is not None else stored_fps
+        if self.settings.render.video_timing_source == "probe_first":
+            source_seconds = probed_seconds if probed_seconds is not None else stored_seconds
+            source_fps = probed_fps if probed_fps is not None else stored_fps
+        else:
+            source_seconds = stored_seconds if stored_seconds is not None else probed_seconds
+            source_fps = stored_fps if stored_fps is not None else probed_fps
         if (
             (source_seconds is None or source_fps is None)
             and project.render_visual_asset is not None

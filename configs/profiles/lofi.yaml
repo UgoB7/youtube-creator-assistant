@@ -43,10 +43,14 @@ render:
   backend: resolve
   timeline_prefix: lofi
   timeline_mode: existing_only
+  append_mode: batch
   clean_media_pool_imports: true
   media_pool_folder_name: YCA Imports
   import_only_required_media: true
   video_mode: video
+  audio_strategy: cut_to_duration
+  video_strategy: loop_to_duration
+  video_timing_source: metadata_first
   image_strategy: fixed_full_duration
   do_render: false
   render_dir: ../../runtime/lofi/renders

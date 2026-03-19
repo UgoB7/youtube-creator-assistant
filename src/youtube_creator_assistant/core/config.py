@@ -61,10 +61,14 @@ class OpenAISettings:
 @dataclass
 class ReplicateSettings:
     enabled: bool = False
+    candidate_count: int = 10
     prompt_seed_path: Path = field(default_factory=lambda: Path("./assets/prompts/shepherd_prompts.txt"))
     image_model: str = "bytedance/seedream-4"
     image_output_format: str = "png"
     image_size: str = "2K"
+    image_width: int = 2048
+    image_height: int = 2048
+    image_max_images: int = 1
     image_aspect_ratio: str = "16:9"
     image_enhance_prompt: bool = False
     image_sequential_generation: str = "disabled"
@@ -91,10 +95,14 @@ class RenderSettings:
     backend: str = "resolve"
     timeline_prefix: str = "timeline"
     timeline_mode: str = "existing_only"
+    append_mode: str = "batch"
     clean_media_pool_imports: bool = True
     media_pool_folder_name: str = "YCA Imports"
     import_only_required_media: bool = True
     video_mode: str = "image"
+    audio_strategy: str = "cut_to_duration"
+    video_strategy: str = "loop_to_duration"
+    video_timing_source: str = "metadata_first"
     image_strategy: str = "fixed_full_duration"
     do_render: bool = False
     render_dir: Path = field(default_factory=lambda: Path("./runtime/renders"))

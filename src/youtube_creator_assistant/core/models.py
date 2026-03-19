@@ -69,6 +69,56 @@ class ChapterEntry:
 
 
 @dataclass
+class ReplicateImageCandidate:
+    candidate_id: str
+    prompt: str
+    image_path: Path
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "prompt": self.prompt,
+            "image_path": str(self.image_path),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReplicateImageCandidate":
+        return cls(
+            candidate_id=str(data["candidate_id"]),
+            prompt=str(data["prompt"]),
+            image_path=Path(str(data["image_path"])),
+        )
+
+
+@dataclass
+class ReplicateImageBatch:
+    batch_id: str
+    profile_id: str
+    batch_dir: Path
+    created_at: str
+    candidates: List[ReplicateImageCandidate] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "batch_id": self.batch_id,
+            "profile_id": self.profile_id,
+            "batch_dir": str(self.batch_dir),
+            "created_at": self.created_at,
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReplicateImageBatch":
+        return cls(
+            batch_id=str(data["batch_id"]),
+            profile_id=str(data["profile_id"]),
+            batch_dir=Path(str(data["batch_dir"])),
+            created_at=str(data["created_at"]),
+            candidates=[ReplicateImageCandidate.from_dict(item) for item in data.get("candidates", [])],
+        )
+
+
+@dataclass
 class VideoProject:
     project_id: str
     profile_id: str

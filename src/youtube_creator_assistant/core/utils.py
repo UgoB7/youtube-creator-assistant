@@ -212,3 +212,56 @@ def extract_video_frame(video_path: Path, output_path: Path, timestamp_seconds: 
     except Exception:
         return None
     return None
+
+
+def make_still_video(
+    image_path: Path,
+    output_path: Path,
+    seconds: float,
+    fps: float,
+    width: int,
+    height: int,
+) -> Path:
+    ffmpeg = _find_media_binary("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to turn still images into exact-duration render clips.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    vf = (
+        f"scale=w={int(width)}:h={int(height)}:force_original_aspect_ratio=decrease,"
+        f"pad={int(width)}:{int(height)}:(ow-iw)/2:(oh-ih)/2"
+    )
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-nostdin",
+            "-loop",
+            "1",
+            "-i",
+            str(image_path),
+            "-t",
+            f"{float(seconds):.6f}",
+            "-r",
+            f"{float(fps):.6f}",
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "stillimage",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return output_path

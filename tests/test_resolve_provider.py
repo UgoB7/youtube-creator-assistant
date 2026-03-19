@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from youtube_creator_assistant.core.config import load_settings
 from youtube_creator_assistant.core.render_plan import RenderPlan
@@ -39,7 +40,7 @@ class _FakeMediaPool:
 
     def AppendToTimeline(self, instructions):
         self.append_calls.append(instructions)
-        return True
+        return [_FakeTimelineItem(instruction) for instruction in instructions]
 
 
 class _FakeTimeline:
@@ -52,6 +53,22 @@ class _FakeTimeline:
 
     def GetEndFrame(self):
         return self._end_frame
+
+
+class _FakeTimelineItem:
+    def __init__(self, instruction):
+        self._instruction = instruction
+
+    def GetTrackTypeAndIndex(self):
+        media_type = self._instruction.get("mediaType")
+        track_type = "audio" if media_type == 2 else "video"
+        return [track_type, self._instruction.get("trackIndex", 1)]
+
+    def GetStart(self, _subframe_precision):
+        return self._instruction["recordFrame"]
+
+    def GetDuration(self, _subframe_precision):
+        return self._instruction["endFrame"] - self._instruction["startFrame"] + 1
 
 
 class ResolveProviderTests(unittest.TestCase):
@@ -87,12 +104,61 @@ class ResolveProviderTests(unittest.TestCase):
             ),
         ]
 
-        provider._append_segments(media_pool, segments, {video_path.resolve(): clip})
+        appended = provider._append_segments(media_pool, segments, {video_path.resolve(): clip})
 
-        self.assertEqual(len(media_pool.append_calls), 2)
+        self.assertEqual(len(media_pool.append_calls), 1)
         self.assertEqual(media_pool.append_calls[0][0]["recordFrame"], 0)
-        self.assertEqual(media_pool.append_calls[1][0]["recordFrame"], 100)
-        self.assertEqual(media_pool.append_calls[0][0]["mediaType"], 1)
+        self.assertEqual(media_pool.append_calls[0][1]["recordFrame"], 100)
+        self.assertNotIn("mediaType", media_pool.append_calls[0][0])
+        self.assertEqual(len(appended), 2)
+
+    @patch("youtube_creator_assistant.providers.resolve.make_still_video")
+    def test_prepares_image_segments_as_exact_duration_video_clips(self, mock_make_still_video):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/vibes.yaml")
+        provider = ResolveProvider(settings)
+        image_path = root / "runtime" / "test-resolve-provider" / "still.png"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"fake")
+
+        def _fake_make_still_video(image_path, output_path, seconds, fps, width, height):
+            output_path.write_bytes(b"clip")
+            return output_path
+
+        mock_make_still_video.side_effect = _fake_make_still_video
+        plan = RenderPlan(
+            project_id="project",
+            profile_id="vibes",
+            timeline_index=0,
+            timeline_name="vibes00",
+            fps=30.0,
+            duration_frames=300,
+            duration_seconds=10.0,
+            video_mode="image",
+            image_strategy="fixed_full_duration",
+            media_pool_folder_name="YCA Imports",
+            created_at="2026-01-01T00:00:00+00:00",
+            visual_segments=[
+                RenderSegment(
+                    media_kind="image",
+                    label="still",
+                    path=image_path,
+                    start_frame=0,
+                    end_frame=0,
+                    record_frame=0,
+                    track_index=1,
+                    timeline_duration_frames=300,
+                )
+            ],
+            audio_segments=[],
+        )
+
+        prepared = provider._prepare_visual_segments(plan)
+
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0].media_kind, "video")
+        self.assertEqual(prepared[0].end_frame, 299)
+        self.assertTrue(prepared[0].path.exists())
 
     def test_validates_exact_timeline_duration(self):
         root = Path(__file__).resolve().parents[1]
@@ -118,6 +184,24 @@ class ResolveProviderTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             provider._validate_timeline_duration(_FakeTimeline(0, 450), plan)
+
+    def test_validates_visual_contiguity(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/vibes.yaml")
+        provider = ResolveProvider(settings)
+
+        contiguous_items = [
+            _FakeTimelineItem({"recordFrame": 0, "startFrame": 0, "endFrame": 359, "trackIndex": 1}),
+            _FakeTimelineItem({"recordFrame": 360, "startFrame": 0, "endFrame": 359, "trackIndex": 1}),
+        ]
+        provider._validate_visual_contiguity(contiguous_items)
+
+        gapped_items = [
+            _FakeTimelineItem({"recordFrame": 0, "startFrame": 0, "endFrame": 359, "trackIndex": 1}),
+            _FakeTimelineItem({"recordFrame": 361, "startFrame": 0, "endFrame": 359, "trackIndex": 1}),
+        ]
+        with self.assertRaises(RuntimeError):
+            provider._validate_visual_contiguity(gapped_items)
 
 
 if __name__ == "__main__":
