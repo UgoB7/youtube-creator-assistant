@@ -43,7 +43,7 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload a visual, or for shepherd generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.</p>
+      <p class="muted">Upload a visual, or if Replicate is enabled for this profile generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.</p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -51,8 +51,8 @@ PAGE = """<!doctype html>
       {% endwith %}
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
         <input type="file" name="visual" accept="{{ accept_attr }}">
-        {% if settings.profile.id == "shepherd" and settings.replicate.enabled %}
-          <p class="muted">If you leave the file empty, shepherd will generate {{ settings.replicate.candidate_count }} candidate images first, then you can pick one.</p>
+        {% if settings.replicate.enabled %}
+          <p class="muted">If you leave the file empty, this profile will generate {{ settings.replicate.candidate_count }} candidate images first, then you can pick one.</p>
         {% endif %}
         <button type="submit">Create project</button>
       </form>
@@ -60,7 +60,7 @@ PAGE = """<!doctype html>
 
     {% if candidate_batch %}
       <div class="card">
-        <h2>Shepherd Candidates</h2>
+        <h2>{{ settings.profile.display_name }} Candidates</h2>
         <p class="muted">Batch {{ candidate_batch.batch_id }}. Choose one image to create the video and the project.</p>
         <div class="gallery">
           {% for candidate in candidate_batch.candidates %}
@@ -259,7 +259,7 @@ def create_app(config_path: Path) -> Flask:
         if not batch_id:
             return None
         try:
-            return pipeline.load_shepherd_candidate_batch(batch_id)
+            return pipeline.load_candidate_batch(batch_id)
         except FileNotFoundError:
             return None
 
@@ -291,12 +291,12 @@ def create_app(config_path: Path) -> Flask:
             temp_path = incoming_dir / filename
             uploaded.save(temp_path)
             project = pipeline.create_project(temp_path)
-        elif settings.profile.id == "shepherd" and settings.replicate.enabled:
-            batch = pipeline.create_shepherd_candidate_batch()
-            flash(f"Generated {len(batch.candidates)} shepherd image candidates. Choose one to continue.")
+        elif settings.replicate.enabled:
+            batch = pipeline.create_candidate_batch()
+            flash(f"Generated {len(batch.candidates)} {settings.profile.id} image candidates. Choose one to continue.")
             return redirect(url_for("index", batch_id=batch.batch_id))
         else:
-            flash("Please upload a visual file, or use shepherd with Replicate enabled.")
+            flash("Please upload a visual file, or use a profile with Replicate enabled.")
             return redirect(url_for("index"))
         return redirect(url_for("index", project_id=project.project_id))
 
@@ -306,8 +306,8 @@ def create_app(config_path: Path) -> Flask:
         if not candidate_id:
             flash("Please choose a candidate image.")
             return redirect(url_for("index", batch_id=batch_id))
-        project = pipeline.create_project_from_shepherd_candidate(batch_id, candidate_id)
-        flash("Candidate selected. The shepherd project has been created.")
+        project = pipeline.create_project_from_candidate(batch_id, candidate_id)
+        flash(f"Candidate selected. The {settings.profile.id} project has been created.")
         return redirect(url_for("index", project_id=project.project_id))
 
     @app.post("/projects/<project_id>/titles")

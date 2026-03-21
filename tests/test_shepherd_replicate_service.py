@@ -66,6 +66,26 @@ class ShepherdReplicateServiceTests(unittest.TestCase):
         self.assertEqual(batch.candidates[-1].candidate_id, "candidate-10")
         self.assertTrue(all(candidate.image_path.exists() for candidate in batch.candidates))
 
+    def test_mercy_prompt_generation_uses_single_llm_call_for_batch(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/mercy.yaml")
+        settings.replicate.candidate_count = 3
+
+        outputs = ['{"options":["Mercy Prompt 1","Mercy Prompt 2","Mercy Prompt 3"]}']
+        provider = _FakeOpenAIProvider(outputs)
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=provider,
+            replicate_provider=_FakeReplicateProvider(),
+        )
+
+        temp_root = root / "runtime" / "test-mercy-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        batch = service.generate_candidate_batch(temp_root, count=3)
+
+        self.assertEqual(len(batch.candidates), 3)
+        self.assertEqual(provider.client()._index, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,6 +34,10 @@ openai:
   devotional_examples_input: |
     The Lord is My Refuge / God, I'm Letting Go - Take Control of My Life / God, I Don't Know the Way - Show Me Where to Go / My Child, Don't Worry - I Will Help You / Lord, Open My Eyes to What I've Been Tolerating and Keep Me from Falling into Sin / God Knows Your Struggles and Stands with You [1 Hour] / Spend Time With God and Find Peace [1Hour] / Quiet Your Heart and Find Peace in Time with God [1Hour] / Take a moment | Rest in God's love [1Hour] / God, I'm Done Trying to Control Everything - Lead Me / Create in Me a Clean Heart, O God - Psalms of Repentance / Lord, order my steps - Because without You I am lost
 
+description:
+  variant: vibespro_legacy
+  audio_explanation_count: 5
+
 replicate:
   enabled: false
 
@@ -47,7 +51,7 @@ render:
   backend: resolve
   timeline_prefix: vibes
   timeline_mode: existing_only
-  append_mode: batch
+  append_mode: sequential_exact
   clean_media_pool_imports: true
   media_pool_folder_name: YCA Imports
   import_only_required_media: true
@@ -55,7 +59,7 @@ render:
   audio_strategy: cut_to_duration
   video_strategy: loop_to_duration
   video_timing_source: metadata_first
-  image_strategy: fixed_full_duration
+  image_strategy: resolve_still_duration
   do_render: false
   render_dir: ../../runtime/vibes/renders
   width: 1920

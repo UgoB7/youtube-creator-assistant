@@ -21,6 +21,13 @@ class ResolveSyncResult:
     message: str
 
 
+@dataclass
+class _AppendedSegment:
+    segment: RenderSegment
+    media_item: object
+    timeline_item: object
+
+
 class ResolveProvider:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -100,9 +107,33 @@ class ResolveProvider:
         self._ensure_timeline_is_empty(timeline)
 
         path_to_item = self._path_to_item_map(imports_folder)
-        visual_items = self._append_segments(media_pool, prepared_plan.visual_segments, path_to_item, prepared_plan.append_mode)
-        self._validate_visual_contiguity(visual_items)
-        self._append_segments(media_pool, prepared_plan.audio_segments, path_to_item, prepared_plan.append_mode)
+        visual_appended = self._append_segments(
+            media_pool,
+            prepared_plan.visual_segments,
+            path_to_item,
+            prepared_plan.append_mode,
+            target_duration_frames=prepared_plan.duration_frames,
+        )
+        self._trim_appended_segments_to_target(
+            timeline,
+            media_pool,
+            visual_appended,
+            prepared_plan.duration_frames,
+        )
+        self._validate_visual_contiguity([item.timeline_item for item in visual_appended])
+        audio_appended = self._append_segments(
+            media_pool,
+            prepared_plan.audio_segments,
+            path_to_item,
+            prepared_plan.append_mode,
+            target_duration_frames=prepared_plan.duration_frames,
+        )
+        self._trim_appended_segments_to_target(
+            timeline,
+            media_pool,
+            audio_appended,
+            prepared_plan.duration_frames,
+        )
 
         self._validate_timeline_duration(timeline, prepared_plan)
 
@@ -270,6 +301,21 @@ class ResolveProvider:
             if segment.media_kind != "image":
                 prepared.append(segment)
                 continue
+            if plan.image_strategy == "resolve_still_duration":
+                duration_frames = int(segment.timeline_duration_frames or 1)
+                prepared.append(
+                    RenderSegment(
+                        media_kind="image",
+                        label=segment.label,
+                        path=segment.path,
+                        start_frame=0,
+                        end_frame=max(0, duration_frames - 1),
+                        record_frame=segment.record_frame,
+                        track_index=segment.track_index,
+                        timeline_duration_frames=duration_frames,
+                    )
+                )
+                continue
             if plan.image_strategy != "fixed_full_duration":
                 prepared.append(segment)
                 continue
@@ -430,51 +476,166 @@ class ResolveProvider:
         segments: List[RenderSegment],
         path_to_item: dict[Path, object],
         append_mode: str = "batch",
-    ) -> list:
+        target_duration_frames: int | None = None,
+    ) -> list[_AppendedSegment]:
         if not segments:
             return []
         ordered_segments = sorted(
             segments,
             key=lambda segment: (segment.track_index, segment.record_frame, segment.start_frame, segment.end_frame),
         )
-        instructions = []
+        resolved_segments: list[tuple[RenderSegment, object]] = []
         for segment in ordered_segments:
-            resolved_path = segment.path.expanduser().resolve()
-            media_item = path_to_item.get(resolved_path)
-            if not media_item:
-                media_item = self._find_media_item_by_path(
-                    media_pool.GetRootFolder(),
-                    resolved_path,
+            media_item = self._resolve_media_item(media_pool, path_to_item, segment.path)
+            resolved_segments.append((segment, media_item))
+
+        if append_mode == "batch":
+            instructions = [
+                self._build_instruction(media_item, segment, segment.record_frame, segment.timeline_duration_frames)
+                for segment, media_item in resolved_segments
+            ]
+            result = media_pool.AppendToTimeline(instructions)
+            if not result:
+                raise RuntimeError("Resolve failed while appending timeline segments in batch mode.")
+            return [
+                _AppendedSegment(segment=segment, media_item=media_item, timeline_item=timeline_item)
+                for (segment, media_item), timeline_item in zip(resolved_segments, list(result or []))
+            ]
+
+        current_record_by_track: dict[int, int] = {}
+        appended_items: list[_AppendedSegment] = []
+        for segment, media_item in resolved_segments:
+            desired_record_frame = current_record_by_track.get(segment.track_index, segment.record_frame)
+            desired_timeline_frames = int(segment.timeline_duration_frames or self._segment_source_frames(segment))
+            if target_duration_frames is not None:
+                remaining_frames = max(0, target_duration_frames - desired_record_frame)
+                desired_timeline_frames = min(desired_timeline_frames, remaining_frames)
+            if desired_timeline_frames <= 0:
+                continue
+            instruction = self._build_instruction(
+                media_item,
+                segment,
+                desired_record_frame,
+                desired_timeline_frames,
+            )
+            result = media_pool.AppendToTimeline([instruction])
+            if not result:
+                raise RuntimeError(
+                    f"Resolve failed while appending segment at recordFrame {desired_record_frame}."
                 )
-            if not media_item:
-                raise RuntimeError(f"Imported media item is missing in Resolve for {segment.path}.")
-            instruction = {
-                "mediaPoolItem": media_item,
-                "startFrame": segment.start_frame,
-                "endFrame": segment.end_frame,
-                "recordFrame": segment.record_frame,
-                "trackIndex": segment.track_index,
-            }
-            if segment.media_kind == "audio":
-                instruction["mediaType"] = 2
-            instructions.append(instruction)
+            timeline_item = list(result or [])[0]
+            actual_start, actual_duration = self._timeline_item_start_duration(timeline_item)
+            current_record_by_track[segment.track_index] = actual_start + actual_duration
+            appended_items.append(
+                _AppendedSegment(segment=segment, media_item=media_item, timeline_item=timeline_item)
+            )
+        return appended_items
 
-        if append_mode == "single":
-            appended_items = []
-            for instruction in instructions:
-                result = media_pool.AppendToTimeline([instruction])
-                ok = bool(result)
-                if not ok:
-                    raise RuntimeError(
-                        f"Resolve failed while appending segment at recordFrame {instruction['recordFrame']}."
-                    )
-                appended_items.extend(result or [])
-            return appended_items
+    def _resolve_media_item(self, media_pool, path_to_item: dict[Path, object], path: Path):
+        resolved_path = path.expanduser().resolve()
+        media_item = path_to_item.get(resolved_path)
+        if not media_item:
+            media_item = self._find_media_item_by_path(
+                media_pool.GetRootFolder(),
+                resolved_path,
+            )
+        if not media_item:
+            raise RuntimeError(f"Imported media item is missing in Resolve for {path}.")
+        return media_item
 
-        result = media_pool.AppendToTimeline(instructions)
-        if not result:
-            raise RuntimeError("Resolve failed while appending timeline segments in batch mode.")
-        return list(result or [])
+    def _build_instruction(
+        self,
+        media_item,
+        segment: RenderSegment,
+        record_frame: int,
+        timeline_duration_frames: int | None,
+    ) -> dict:
+        duration_frames = int(timeline_duration_frames or segment.timeline_duration_frames or 1)
+        return {
+            "mediaPoolItem": media_item,
+            "startFrame": segment.start_frame,
+            "endFrame": self._segment_end_frame_for_timeline_duration(segment, duration_frames),
+            "recordFrame": record_frame,
+            "trackIndex": segment.track_index,
+        }
+
+    def _segment_source_frames(self, segment: RenderSegment) -> int:
+        return max(1, int(segment.end_frame) - int(segment.start_frame) + 1)
+
+    def _segment_end_frame_for_timeline_duration(self, segment: RenderSegment, timeline_duration_frames: int) -> int:
+        source_frames = self._segment_source_frames(segment)
+        timeline_frames = max(1, int(segment.timeline_duration_frames or source_frames))
+        if segment.media_kind == "video":
+            adjusted_source_frames = max(1, round(timeline_duration_frames * (source_frames / float(timeline_frames))))
+            adjusted_source_frames = min(source_frames, adjusted_source_frames)
+            return int(segment.start_frame) + adjusted_source_frames - 1
+        adjusted_source_frames = min(source_frames, max(1, int(timeline_duration_frames)))
+        return int(segment.start_frame) + adjusted_source_frames - 1
+
+    def _timeline_item_start_duration(self, timeline_item) -> tuple[int, int]:
+        try:
+            start = int(round(float(timeline_item.GetStart(False))))
+        except Exception:
+            start = 0
+        try:
+            duration = int(round(float(timeline_item.GetDuration(False))))
+        except Exception:
+            duration = 0
+        return start, max(0, duration)
+
+    def _trim_appended_segments_to_target(
+        self,
+        timeline,
+        media_pool,
+        appended_segments: list[_AppendedSegment],
+        target_duration_frames: int,
+    ) -> None:
+        if not appended_segments:
+            return
+        target_end_exclusive = int(target_duration_frames)
+        while appended_segments:
+            last = appended_segments[-1]
+            actual_start, actual_duration = self._timeline_item_start_duration(last.timeline_item)
+            actual_end_exclusive = actual_start + actual_duration
+            if actual_end_exclusive <= target_end_exclusive:
+                return
+            self._delete_timeline_items(timeline, [last.timeline_item])
+            appended_segments.pop()
+            new_timeline_duration = target_end_exclusive - actual_start
+            if new_timeline_duration <= 0:
+                continue
+            instruction = self._build_instruction(
+                last.media_item,
+                last.segment,
+                actual_start,
+                new_timeline_duration,
+            )
+            result = media_pool.AppendToTimeline([instruction])
+            if not result:
+                raise RuntimeError(
+                    f"Resolve failed while trimming the last segment to {target_duration_frames} frame(s)."
+                )
+            appended_segments.append(
+                _AppendedSegment(
+                    segment=last.segment,
+                    media_item=last.media_item,
+                    timeline_item=list(result or [])[0],
+                )
+            )
+            return
+
+    def _delete_timeline_items(self, timeline, items: list) -> None:
+        if not items:
+            return
+        delete_fn = getattr(timeline, "DeleteClips", None)
+        if not callable(delete_fn):
+            raise RuntimeError("Resolve timeline does not support DeleteClips for exact trim operations.")
+        try:
+            ok = bool(delete_fn(items, False))
+        except Exception:
+            ok = False
+        if not ok:
+            raise RuntimeError("Resolve failed while deleting a timeline clip during exact trim.")
 
     def _validate_visual_contiguity(self, timeline_items: list) -> None:
         if len(timeline_items) < 2:
@@ -507,7 +668,7 @@ class ResolveProvider:
     def _validate_timeline_duration(self, timeline, plan: RenderPlan) -> None:
         actual_frames = self._timeline_duration_frames(timeline)
         expected_frames = int(plan.duration_frames)
-        if abs(actual_frames - expected_frames) > 1:
+        if actual_frames != expected_frames:
             raise RuntimeError(
                 f"Resolve timeline duration mismatch for {plan.timeline_name}: "
                 f"expected {expected_frames} frame(s), got {actual_frames}. "

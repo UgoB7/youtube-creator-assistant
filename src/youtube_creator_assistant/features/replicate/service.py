@@ -12,7 +12,7 @@ from youtube_creator_assistant.providers.openai_client import OpenAIProvider
 from youtube_creator_assistant.providers.replicate import ReplicateProvider
 
 
-class ShepherdReplicateService:
+class ReplicateWorkflowService:
     def __init__(
         self,
         settings: Settings,
@@ -29,7 +29,7 @@ class ShepherdReplicateService:
         prompts = self._openai_generate_prompts(seeds, requested)
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        batch_id = f"shepherd-candidates-{stamp}"
+        batch_id = f"{self.settings.profile.id}-candidates-{stamp}"
         batch_dir = target_dir / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
         image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
@@ -58,14 +58,18 @@ class ShepherdReplicateService:
 
     def generate_visual_stack(self, target_dir: Path) -> tuple[str, Path, Path]:
         seeds = self._load_prompt_seeds(self.settings.replicate.prompt_seed_path)
-        prompt = self._openai_generate_prompt(seeds)
+        prompts = self._openai_generate_prompts(seeds, 1)
+        if not prompts:
+            raise RuntimeError("OpenAI did not return a usable image prompt.")
+        prompt = prompts[0]
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        profile_id = self.settings.profile.id
         image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
-        image_path = target_dir / f"shepherd_image_{stamp}.{image_ext}"
+        image_path = target_dir / f"{profile_id}_image_{stamp}.{image_ext}"
         image_path.write_bytes(self.replicate_provider.generate_image_bytes(prompt))
 
-        video_path = target_dir / f"shepherd_video_{stamp}.mp4"
+        video_path = target_dir / f"{profile_id}_video_{stamp}.mp4"
         video_path.write_bytes(self.replicate_provider.generate_video_bytes(image_path))
         return prompt, image_path, video_path
 
@@ -73,23 +77,23 @@ class ShepherdReplicateService:
         if not path.exists():
             raise FileNotFoundError(f"Prompt seed file not found: {path}")
         lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
-        seeds = [line for line in lines if line]
+        seeds = [line for line in lines if line and not re.fullmatch(r"\d+\s*:", line)]
         if not seeds:
             raise RuntimeError(f"Prompt seed file is empty: {path}")
         return seeds
 
-    def _openai_generate_prompt(self, examples: list[str]) -> str:
-        prompts = self._openai_generate_prompts(examples, 1)
-        if prompts:
-            return prompts[0]
-        raise RuntimeError("OpenAI did not return a usable shepherd image prompt.")
-
     def _openai_generate_prompts(self, examples: list[str], count: int) -> list[str]:
+        style = (self.settings.replicate.prompt_style or "shepherd_legacy").strip().lower()
+        if style == "mercy_legacy":
+            return self._openai_generate_prompts_mercy(examples, count)
+        return self._openai_generate_prompts_shepherd(examples, count)
+
+    def _openai_generate_prompts_shepherd(self, examples: list[str], count: int) -> list[str]:
         def _normalize_prompt(text: str) -> str:
             return re.sub(r"\s+", " ", text).strip().casefold()
 
         def _one_prompt(ordinal: int) -> str:
-            prompt = self._build_prompt_generation_prompt(examples, ordinal=ordinal, total=count)
+            prompt = self._build_shepherd_prompt_generation_prompt(examples, ordinal=ordinal, total=count)
             for _ in range(2):
                 response = self.openai_provider.client().responses.create(
                     model=self.settings.openai.model,
@@ -99,18 +103,14 @@ class ShepherdReplicateService:
                 options = self._parse_prompt_options(raw, 1)
                 if options:
                     return options[0]
-            raise RuntimeError(f"OpenAI did not return a usable shepherd image prompt (item {ordinal}/{count}).")
+            raise RuntimeError(f"OpenAI did not return a usable image prompt (item {ordinal}/{count}).")
 
         max_workers = max(1, min(count, 4))
         slots: list[str | None] = [None] * count
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_index = {
-                executor.submit(_one_prompt, index + 1): index
-                for index in range(count)
-            }
+            future_to_index = {executor.submit(_one_prompt, index + 1): index for index in range(count)}
             for future in concurrent.futures.as_completed(future_to_index):
-                index = future_to_index[future]
-                slots[index] = future.result()
+                slots[future_to_index[future]] = future.result()
 
         seen: set[str] = set()
         prompts: list[str] = []
@@ -130,7 +130,12 @@ class ShepherdReplicateService:
             extra_attempts += 1
             response = self.openai_provider.client().responses.create(
                 model=self.settings.openai.model,
-                input=[{"role": "user", "content": self._build_prompt_generation_prompt(examples, ordinal=extra_ordinal, total=count)}],
+                input=[
+                    {
+                        "role": "user",
+                        "content": self._build_shepherd_prompt_generation_prompt(examples, ordinal=extra_ordinal, total=count),
+                    }
+                ],
             )
             raw = (response.output_text or "").strip()
             options = self._parse_prompt_options(raw, 1)
@@ -146,13 +151,40 @@ class ShepherdReplicateService:
 
         if prompts:
             return prompts[:count]
-        raise RuntimeError("OpenAI did not return usable shepherd image prompts.")
+        raise RuntimeError("OpenAI did not return usable image prompts.")
 
-    def _build_prompt_generation_prompt(self, examples: list[str], ordinal: int, total: int) -> str:
+    def _openai_generate_prompts_mercy(self, examples: list[str], count: int) -> list[str]:
+        prompt = self._build_mercy_prompt_generation_prompt(examples, count)
+        for _ in range(2):
+            response = self.openai_provider.client().responses.create(
+                model=self.settings.openai.model,
+                input=[{"role": "user", "content": prompt}],
+            )
+            raw = (response.output_text or "").strip()
+            options = self._parse_prompt_options(raw, count)
+            if len(options) >= count:
+                return options[:count]
+        raise RuntimeError("OpenAI did not return enough image prompts.")
+
+    def _build_shepherd_prompt_generation_prompt(self, examples: list[str], ordinal: int, total: int) -> str:
         lines = [
             f"Generate one image prompt similar to the examples, on the theme of Jesus (item {ordinal}/{total}).",
             "Constraint: Jesus must be sleeping.",
             "Clearly describe that Jesus is asleep so there is no ambiguity.",
+            "",
+            "Examples:",
+            *[f"- {example}" for example in examples],
+        ]
+        return "\n".join(lines)
+
+    def _build_mercy_prompt_generation_prompt(self, examples: list[str], count: int) -> str:
+        lines = [
+            f"Write EXACTLY {count} NEW image prompts in English.",
+            "Match the distribution of length, structure, adjective density, and scene composition from the examples.",
+            "Keep the same family of themes and visual ingredients as the examples.",
+            "Do not copy any exact sequence of words from the examples.",
+            "Each output should be one long, comma-separated cinematic scene prompt.",
+            'Return strict JSON: {"options": ["prompt1", "prompt2", "..."]}.',
             "",
             "Examples:",
             *[f"- {example}" for example in examples],
@@ -181,3 +213,6 @@ class ShepherdReplicateService:
             pass
         lines = [line.strip("-* \t") for line in raw.splitlines() if line.strip()]
         return lines[:count]
+
+
+ShepherdReplicateService = ReplicateWorkflowService

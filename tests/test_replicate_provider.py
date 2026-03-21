@@ -79,6 +79,32 @@ class ReplicateProviderTests(unittest.TestCase):
         self.assertTrue(hasattr(input_payload["image"], "read"))
         self.assertTrue(hasattr(input_payload["last_frame_image"], "read"))
 
+    def test_flux_payload_matches_legacy_mercy_options(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/mercy.yaml")
+        provider = ReplicateProvider(settings)
+        client = _FakeRunClient()
+        provider._client = client
+
+        payload = provider.generate_image_bytes("Mercy prompt")
+
+        self.assertEqual(payload, b"ok")
+        self.assertEqual(len(client.calls), 1)
+        model, input_payload = client.calls[0]
+        self.assertEqual(model, "black-forest-labs/flux-2-max")
+        self.assertEqual(
+            input_payload,
+            {
+                "prompt": "Mercy prompt",
+                "resolution": "2 MP",
+                "aspect_ratio": "16:9",
+                "input_images": [],
+                "output_format": "png",
+                "output_quality": 100,
+                "safety_tolerance": 5,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,6 +58,37 @@ class ContentPipelineTests(unittest.TestCase):
             self.assertEqual(project.render_visual_asset.fps, float(settings.replicate.video_fps))
             self.assertEqual(project.render_visual_asset.path.read_bytes(), b"fake-video")
 
+    def test_mercy_uploaded_image_generates_render_video(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/mercy.yaml")
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "psalms"
+            settings.paths.gospel_dir = temp_dir / "assets" / "gospel"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            uploaded_image = temp_dir / "uploaded.png"
+            uploaded_image.write_bytes(_PNG_BYTES)
+
+            pipeline = ContentPipeline(settings)
+            fake_replicate = _FakeReplicateProvider()
+            pipeline.replicate_provider = fake_replicate
+
+            project = pipeline.create_project(uploaded_image)
+
+            self.assertEqual(fake_replicate.video_inputs, [uploaded_image.resolve()])
+            self.assertEqual(project.visual_asset.kind, "image")
+            self.assertIsNotNone(project.render_visual_asset)
+            assert project.render_visual_asset is not None
+            self.assertEqual(project.render_visual_asset.kind, "video")
+
     def test_regenerate_project_render_video_rewrites_existing_render_asset(self):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/shepherd.yaml")

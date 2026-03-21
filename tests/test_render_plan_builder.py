@@ -395,7 +395,7 @@ class RenderPlanBuilderTests(unittest.TestCase):
         runtime = RuntimeManager(settings)
         plan = RenderPlanBuilder(settings, runtime).build_for_project(project)
 
-        self.assertEqual(plan.visual_segments[0].end_frame, 359)
+        self.assertEqual(plan.visual_segments[0].end_frame, 287)
         self.assertEqual(plan.visual_segments[0].record_frame, 0)
         self.assertEqual(plan.visual_segments[1].record_frame, 360)
 
@@ -454,7 +454,7 @@ class RenderPlanBuilderTests(unittest.TestCase):
         runtime = RuntimeManager(settings)
         plan = RenderPlanBuilder(settings, runtime).build_for_project(project, fps_override=30.0)
 
-        self.assertEqual(plan.visual_segments[0].end_frame, 359)
+        self.assertEqual(plan.visual_segments[0].end_frame, 287)
         self.assertEqual(plan.visual_segments[1].record_frame, 360)
 
     @patch("youtube_creator_assistant.features.render.builder.probe_video_metadata", return_value=(None, None))

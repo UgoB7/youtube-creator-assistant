@@ -16,17 +16,29 @@ class ReplicateProvider:
         self._client = None
 
     def generate_image_bytes(self, prompt: str) -> bytes:
-        payload = {
-            "width": int(self.settings.replicate.image_width),
-            "height": int(self.settings.replicate.image_height),
-            "prompt": prompt,
-            "max_images": int(self.settings.replicate.image_max_images),
-            "image_input": [],
-            "size": self.settings.replicate.image_size,
-            "aspect_ratio": self.settings.replicate.image_aspect_ratio,
-            "enhance_prompt": self.settings.replicate.image_enhance_prompt,
-            "sequential_image_generation": self.settings.replicate.image_sequential_generation,
-        }
+        style = (self.settings.replicate.image_payload_style or "seedream").strip().lower()
+        if style == "flux":
+            payload = {
+                "prompt": prompt,
+                "resolution": self.settings.replicate.image_size,
+                "aspect_ratio": self.settings.replicate.image_aspect_ratio,
+                "input_images": [],
+                "output_format": self.settings.replicate.image_output_format,
+                "output_quality": int(self.settings.replicate.image_output_quality),
+                "safety_tolerance": int(self.settings.replicate.image_safety_tolerance),
+            }
+        else:
+            payload = {
+                "width": int(self.settings.replicate.image_width),
+                "height": int(self.settings.replicate.image_height),
+                "prompt": prompt,
+                "max_images": int(self.settings.replicate.image_max_images),
+                "image_input": [],
+                "size": self.settings.replicate.image_size,
+                "aspect_ratio": self.settings.replicate.image_aspect_ratio,
+                "enhance_prompt": self.settings.replicate.image_enhance_prompt,
+                "sequential_image_generation": self.settings.replicate.image_sequential_generation,
+            }
         output = self._run_with_retry(self.settings.replicate.image_model, payload)
         return self._output_bytes(output)
 

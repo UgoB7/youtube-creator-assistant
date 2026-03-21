@@ -30,8 +30,30 @@ openai:
   title_examples_input: ""
   devotional_examples_input: ""
 
+description:
+  variant: mercy_legacy
+  audio_explanation_count: 5
+
 replicate:
-  enabled: false
+  enabled: true
+  candidate_count: 10
+  prompt_style: mercy_legacy
+  prompt_seed_path: ../../assets/prompts/shepherd_prompts.txt
+  image_model: black-forest-labs/flux-2-max
+  image_payload_style: flux
+  image_output_format: png
+  image_size: "2 MP"
+  image_aspect_ratio: "16:9"
+  image_output_quality: 100
+  image_safety_tolerance: 5
+  video_model: bytedance/seedance-1.5-pro
+  video_fps: 24
+  video_duration: 12
+  video_resolution: 1080p
+  video_aspect_ratio: "16:9"
+  video_camera_fixed: true
+  video_generate_audio: false
+  video_prompt: "no camera movement. no talking. mouth closed. "
 
 web:
   host: 127.0.0.1
@@ -43,7 +65,7 @@ render:
   backend: resolve
   timeline_prefix: mercy
   timeline_mode: existing_only
-  append_mode: batch
+  append_mode: sequential_exact
   clean_media_pool_imports: true
   media_pool_folder_name: YCA Imports
   import_only_required_media: true
@@ -51,7 +73,7 @@ render:
   audio_strategy: cut_to_duration
   video_strategy: loop_to_duration
   video_timing_source: metadata_first
-  image_strategy: fixed_full_duration
+  image_strategy: resolve_still_duration
   do_render: false
   render_dir: ../../runtime/mercy/renders
   width: 1920

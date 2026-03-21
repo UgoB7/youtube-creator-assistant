@@ -7,7 +7,7 @@ from typing import Iterable
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import ReplicateImageBatch
-from youtube_creator_assistant.features.replicate.service import ShepherdReplicateService
+from youtube_creator_assistant.features.replicate.service import ReplicateWorkflowService
 from youtube_creator_assistant.features.render.builder import RenderPlanBuilder
 from youtube_creator_assistant.core.runtime import RuntimeManager
 from youtube_creator_assistant.core.utils import dedupe_preserve_order
@@ -33,7 +33,7 @@ class ContentPipeline:
         self.thumbnail_service = ThumbnailService(settings)
         self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
         self.replicate_provider = ReplicateProvider(settings)
-        self.shepherd_replicate_service = ShepherdReplicateService(
+        self.replicate_workflow_service = ReplicateWorkflowService(
             settings,
             replicate_provider=self.replicate_provider,
         )
@@ -41,8 +41,8 @@ class ContentPipeline:
 
     def create_project(self, visual_source: str | Path):
         source_path = Path(visual_source).expanduser().resolve()
-        if self._should_generate_shepherd_render_video(source_path):
-            video_path = self._generate_shepherd_render_video(source_path)
+        if self._should_generate_render_video(source_path):
+            video_path = self._generate_render_video(source_path)
             return self.runtime.create_project_from_assets(
                 source_path,
                 render_visual_source=video_path,
@@ -86,38 +86,35 @@ class ContentPipeline:
         self.runtime.save_project(project)
         return project
 
-    def _should_generate_shepherd_render_video(self, source_path: Path) -> bool:
+    def _should_generate_render_video(self, source_path: Path) -> bool:
         return (
-            self.settings.profile.id == "shepherd"
-            and self.settings.replicate.enabled
+            self.settings.replicate.enabled
             and self.runtime._detect_visual_kind(source_path) == "image"
         )
 
-    def _generate_shepherd_render_video(self, source_path: Path) -> Path:
+    def _generate_render_video(self, source_path: Path) -> Path:
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
         video_path = generated_dir / f"{source_path.stem}_render.mp4"
         video_path.write_bytes(self.replicate_provider.generate_video_bytes(source_path))
         return video_path
 
-    def create_shepherd_candidate_batch(self, count: int | None = None) -> ReplicateImageBatch:
-        if self.settings.profile.id != "shepherd":
-            raise ValueError("Candidate generation is only enabled for the shepherd profile.")
+    def create_candidate_batch(self, count: int | None = None) -> ReplicateImageBatch:
         if not self.settings.replicate.enabled:
             raise RuntimeError("Replicate is disabled for this profile.")
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
-        return self.shepherd_replicate_service.generate_candidate_batch(generated_dir, count=count)
+        return self.replicate_workflow_service.generate_candidate_batch(generated_dir, count=count)
 
-    def load_shepherd_candidate_batch(self, batch_id: str) -> ReplicateImageBatch:
+    def load_candidate_batch(self, batch_id: str) -> ReplicateImageBatch:
         batch_path = self.settings.paths.incoming_dir / "replicate_generated" / batch_id / "batch.json"
         if not batch_path.exists():
             raise FileNotFoundError(f"Replicate candidate batch not found: {batch_id}")
         payload = json.loads(batch_path.read_text(encoding="utf-8"))
         return ReplicateImageBatch.from_dict(payload)
 
-    def create_project_from_shepherd_candidate(self, batch_id: str, candidate_id: str):
-        batch = self.load_shepherd_candidate_batch(batch_id)
+    def create_project_from_candidate(self, batch_id: str, candidate_id: str):
+        batch = self.load_candidate_batch(batch_id)
         candidate = next((item for item in batch.candidates if item.candidate_id == candidate_id), None)
         if candidate is None:
             raise ValueError(f"Candidate {candidate_id} was not found in batch {batch_id}.")
@@ -137,15 +134,13 @@ class ContentPipeline:
         return project
 
     def create_project_from_seed_prompts(self):
-        if self.settings.profile.id != "shepherd":
-            raise ValueError("Seed-based Replicate generation is only enabled for the shepherd profile.")
         if not self.settings.replicate.enabled:
             raise RuntimeError("Replicate is disabled for this profile.")
 
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
 
-        generated_prompt, image_path, video_path = self.shepherd_replicate_service.generate_visual_stack(
+        generated_prompt, image_path, video_path = self.replicate_workflow_service.generate_visual_stack(
             generated_dir
         )
 
@@ -159,6 +154,15 @@ class ContentPipeline:
         (project.project_dir / "replicate_prompt.txt").write_text(generated_prompt, encoding="utf-8")
         self.runtime.save_project(project)
         return project
+
+    def create_shepherd_candidate_batch(self, count: int | None = None) -> ReplicateImageBatch:
+        return self.create_candidate_batch(count=count)
+
+    def load_shepherd_candidate_batch(self, batch_id: str) -> ReplicateImageBatch:
+        return self.load_candidate_batch(batch_id)
+
+    def create_project_from_shepherd_candidate(self, batch_id: str, candidate_id: str):
+        return self.create_project_from_candidate(batch_id, candidate_id)
 
     def generate_titles(self, project_id: str):
         project = self.runtime.load_project(project_id)

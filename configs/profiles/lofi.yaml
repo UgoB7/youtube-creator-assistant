@@ -30,6 +30,10 @@ openai:
   title_examples_input: ""
   devotional_examples_input: ""
 
+description:
+  variant: vibespro_legacy
+  audio_explanation_count: 5
+
 replicate:
   enabled: false
 
@@ -43,7 +47,7 @@ render:
   backend: resolve
   timeline_prefix: lofi
   timeline_mode: existing_only
-  append_mode: batch
+  append_mode: sequential_exact
   clean_media_pool_imports: true
   media_pool_folder_name: YCA Imports
   import_only_required_media: true
@@ -51,7 +55,7 @@ render:
   audio_strategy: cut_to_duration
   video_strategy: loop_to_duration
   video_timing_source: metadata_first
-  image_strategy: fixed_full_duration
+  image_strategy: resolve_still_duration
   do_render: false
   render_dir: ../../runtime/lofi/renders
   width: 1920

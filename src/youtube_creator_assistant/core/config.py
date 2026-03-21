@@ -59,11 +59,19 @@ class OpenAISettings:
 
 
 @dataclass
+class DescriptionSettings:
+    variant: str = "shepherd_legacy"
+    audio_explanation_count: int = 5
+
+
+@dataclass
 class ReplicateSettings:
     enabled: bool = False
     candidate_count: int = 10
+    prompt_style: str = "shepherd_legacy"
     prompt_seed_path: Path = field(default_factory=lambda: Path("./assets/prompts/shepherd_prompts.txt"))
     image_model: str = "bytedance/seedream-4"
+    image_payload_style: str = "seedream"
     image_output_format: str = "png"
     image_size: str = "2K"
     image_width: int = 2048
@@ -72,6 +80,8 @@ class ReplicateSettings:
     image_aspect_ratio: str = "16:9"
     image_enhance_prompt: bool = False
     image_sequential_generation: str = "disabled"
+    image_output_quality: int = 100
+    image_safety_tolerance: int = 5
     video_model: str = "bytedance/seedance-1.5-pro"
     video_fps: int = 24
     video_duration: int = 12
@@ -95,7 +105,7 @@ class RenderSettings:
     backend: str = "resolve"
     timeline_prefix: str = "timeline"
     timeline_mode: str = "existing_only"
-    append_mode: str = "batch"
+    append_mode: str = "sequential_exact"
     clean_media_pool_imports: bool = True
     media_pool_folder_name: str = "YCA Imports"
     import_only_required_media: bool = True
@@ -118,6 +128,7 @@ class Settings:
     workflow: WorkflowSettings = field(default_factory=WorkflowSettings)
     thumbnail: ThumbnailSettings = field(default_factory=ThumbnailSettings)
     openai: OpenAISettings = field(default_factory=OpenAISettings)
+    description: DescriptionSettings = field(default_factory=DescriptionSettings)
     replicate: ReplicateSettings = field(default_factory=ReplicateSettings)
     web: WebSettings = field(default_factory=WebSettings)
     render: RenderSettings = field(default_factory=RenderSettings)
@@ -133,6 +144,7 @@ def load_settings(config_path: str | Path) -> Settings:
     workflow_data: Dict[str, Any] = data.get("workflow", {})
     thumbnail_data: Dict[str, Any] = data.get("thumbnail", {})
     openai_data: Dict[str, Any] = data.get("openai", {})
+    description_data: Dict[str, Any] = data.get("description", {})
     replicate_data: Dict[str, Any] = data.get("replicate", {})
     if "prompt_seed_path" in replicate_data:
         replicate_data = {
@@ -166,6 +178,7 @@ def load_settings(config_path: str | Path) -> Settings:
         workflow=WorkflowSettings(**workflow_data),
         thumbnail=ThumbnailSettings(**thumbnail_data),
         openai=OpenAISettings(**openai_data),
+        description=DescriptionSettings(**description_data),
         replicate=ReplicateSettings(**replicate_data),
         web=WebSettings(**web_data),
         render=RenderSettings(**render_data),

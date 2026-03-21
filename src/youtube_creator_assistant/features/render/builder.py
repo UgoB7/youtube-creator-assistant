@@ -119,43 +119,33 @@ class RenderPlanBuilder:
         raise ValueError(f"Project {project.project_id} is missing from runtime outputs.")
 
     def _build_video_segments(self, project: VideoProject, visual_asset, duration_frames: int, fps: float) -> list[RenderSegment]:
-        source_seconds, _source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
-        # Match the legacy Shepherd behavior: build subclips in timeline-frame units,
-        # then append them contiguously in one batch.
-        clip_frames = max(1, round(source_seconds * fps))
-        remaining = duration_frames
+        source_seconds, source_fps = self._video_source_timing(project, visual_asset, duration_frames, fps)
+        clip_source_frames = max(1, round(source_seconds * source_fps))
+        loop_timeline_frames = max(1, round(source_seconds * fps))
         record_frame = 0
         segments: list[RenderSegment] = []
 
-        while remaining > clip_frames:
+        while record_frame < duration_frames:
+            remaining_timeline_frames = max(0, duration_frames - record_frame)
+            put_timeline_frames = min(loop_timeline_frames, remaining_timeline_frames)
+            if put_timeline_frames <= 0:
+                break
+            segment_seconds = put_timeline_frames / float(fps)
+            segment_source_frames = max(1, round(segment_seconds * source_fps))
+            segment_source_frames = min(clip_source_frames, segment_source_frames)
             segments.append(
                 RenderSegment(
                     media_kind="video",
                     label=visual_asset.original_name,
                     path=visual_asset.path,
                     start_frame=0,
-                    end_frame=max(0, clip_frames - 1),
+                    end_frame=max(0, segment_source_frames - 1),
                     record_frame=record_frame,
                     track_index=1,
-                    timeline_duration_frames=clip_frames,
+                    timeline_duration_frames=put_timeline_frames,
                 )
             )
-            record_frame += clip_frames
-            remaining -= clip_frames
-
-        if remaining > 0:
-            segments.append(
-                RenderSegment(
-                    media_kind="video",
-                    label=visual_asset.original_name,
-                    path=visual_asset.path,
-                    start_frame=0,
-                    end_frame=max(0, remaining - 1),
-                    record_frame=record_frame,
-                    track_index=1,
-                    timeline_duration_frames=remaining,
-                )
-            )
+            record_frame += put_timeline_frames
         return segments
 
     def _video_source_timing(
