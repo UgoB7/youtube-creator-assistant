@@ -5,9 +5,9 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from mutagen.mp3 import MP3
+from mutagen import File as MutagenFile
 
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import AudioTrack, ChapterEntry, VideoProject
@@ -34,6 +34,11 @@ class AudioPlanService:
         self.settings = settings
 
     def build_for_project(self, project: VideoProject, preferred_refs: Sequence[str]) -> VideoProject:
+        effective_preferred_refs = (
+            list(preferred_refs)
+            if self.settings.workflow.use_title_reference_guidance
+            else []
+        )
         psalms = self.collect_psalms()
         gospels = self.collect_gospels() if self.settings.workflow.include_gospel else []
         pool = psalms + gospels
@@ -47,8 +52,8 @@ class AudioPlanService:
                 self.settings.workflow.target_duration_tc,
                 self.settings.workflow.fps,
             ),
-            preferred_refs=preferred_refs,
-            selection_seed=stable_seed(project.project_id, project.selected_titles, preferred_refs),
+            preferred_refs=effective_preferred_refs,
+            selection_seed=self._selection_seed(project, effective_preferred_refs),
         )
 
         tracks_dir = project.project_dir / "tracks"
@@ -97,12 +102,15 @@ class AudioPlanService:
         (project.project_dir / "audio_selection_debug.txt").write_text(
             "\n".join(
                 [
-                    f"Preferred refs: {', '.join(preferred_refs)}",
+                    f"Preferred refs enabled: {self.settings.workflow.use_title_reference_guidance}",
+                    f"Preferred refs: {', '.join(effective_preferred_refs)}",
                     f"Guided head target: {self.settings.workflow.max_head_items}",
-                    f"Preferred refs returned: {len(preferred_refs)}",
+                    f"Preferred refs returned: {len(effective_preferred_refs)}",
                     f"Unique tracks selected: {len(audio_tracks)}",
                     f"Unique duration seconds: {int(unique_duration_seconds)}",
                     f"Repeats allowed: {self.settings.workflow.allow_repeats}",
+                    f"Selection seed mode: {self.settings.workflow.selection_seed_mode}",
+                    f"Audio extensions: {', '.join(self._audio_extensions())}",
                     f"Selected tracks: {', '.join(track.label for track in audio_tracks)}",
                 ]
             ),
@@ -116,7 +124,7 @@ class AudioPlanService:
 
     def collect_psalms(self) -> List[LibraryItem]:
         items: List[LibraryItem] = []
-        for path in sorted(self.settings.paths.psalms_dir.glob("*.mp3")):
+        for path in self._iter_audio_files(self.settings.paths.psalms_dir, recursive=False):
             psalm_num = self._parse_psalm_number(path)
             items.append(
                 LibraryItem(
@@ -131,7 +139,7 @@ class AudioPlanService:
 
     def collect_gospels(self) -> List[LibraryItem]:
         items: List[LibraryItem] = []
-        for path in sorted(self.settings.paths.gospel_dir.glob("*/*.mp3")):
+        for path in self._iter_audio_files(self.settings.paths.gospel_dir, recursive=True):
             gospel_name, chapter = self._parse_gospel_ref(path.stem)
             if not gospel_name or chapter is None:
                 gospel_name = self._normalize_gospel_name(path.parent.name)
@@ -233,6 +241,35 @@ class AudioPlanService:
                     break
         return selection
 
+    def _selection_seed(self, project: VideoProject, preferred_refs: Sequence[str]) -> int:
+        if self.settings.workflow.selection_seed_mode == "random":
+            return random.SystemRandom().randrange(0, 2**63)
+        return stable_seed(project.project_id, project.selected_titles, preferred_refs)
+
+    def _audio_extensions(self) -> List[str]:
+        normalized: List[str] = []
+        for value in self.settings.workflow.audio_extensions:
+            suffix = str(value).strip().lower()
+            if not suffix:
+                continue
+            if not suffix.startswith("."):
+                suffix = f".{suffix}"
+            if suffix not in normalized:
+                normalized.append(suffix)
+        return normalized or [".mp3"]
+
+    def _iter_audio_files(self, base_dir: Path, recursive: bool) -> List[Path]:
+        if not base_dir.exists():
+            return []
+        allowed_suffixes: Set[str] = set(self._audio_extensions())
+        iterator = base_dir.rglob("*") if recursive else base_dir.iterdir()
+        files = [
+            path
+            for path in iterator
+            if path.is_file() and path.suffix.lower() in allowed_suffixes
+        ]
+        return sorted(files)
+
     def _build_balanced_queue(
         self,
         gospel_items: Sequence[LibraryItem],
@@ -273,7 +310,10 @@ class AudioPlanService:
 
     def _duration_seconds(self, path: Path) -> float:
         try:
-            return float(MP3(path).info.length)
+            audio_file = MutagenFile(path)
+            if audio_file is None or audio_file.info is None:
+                return 0.0
+            return float(audio_file.info.length)
         except Exception:
             return 0.0
 

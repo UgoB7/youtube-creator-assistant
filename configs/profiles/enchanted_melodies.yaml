@@ -1,0 +1,71 @@
+profile:
+  id: enchanted_melodies
+  display_name: Enchanted Melodies
+  visual_input_mode: image
+
+paths:
+  runtime_root: ../../runtime/enchanted_melodies
+  outputs_dir: ../../runtime/enchanted_melodies/outputs
+  incoming_dir: ../../runtime/enchanted_melodies/incoming
+  images_dir: ../../runtime/enchanted_melodies/images
+  logs_dir: ../../runtime/enchanted_melodies/logs
+  psalms_dir: ../../assets/audio/enchanted_melodies/faded
+  gospel_dir: ../../assets/audio/enchanted_melodies/faded
+
+workflow:
+  fps: 30
+  target_duration_tc: "3:33:32:20"
+  trim_first_audio_seconds: 0.0
+  include_gospel: false
+  max_head_items: 0
+  max_reference_summaries: 0
+  preferred_reference_count: 0
+  allow_repeats: true
+  use_title_reference_guidance: false
+  selection_seed_mode: random
+  audio_extensions:
+    - .wav
+    - .mp3
+
+thumbnail:
+  max_bytes: 2097152
+  target_bytes: 1800000
+  suffix: "_yt"
+
+openai:
+  model: gpt-5.2-2025-12-11
+  title_examples_input: |
+    Dream beside the moonlit lake / Enchanted night for quiet rest / Soft fantasy music for deep sleep / Starlit calm under the willow trees / Magical evening melodies for peace / Gentle fairytale ambience to unwind
+  devotional_examples_input: |
+    Dream beside the moonlit lake / Enchanted night for quiet rest / Soft fantasy music for deep sleep / Starlit calm under the willow trees / Magical evening melodies for peace / Gentle fairytale ambience to unwind
+
+description:
+  variant: vibespro_legacy
+  audio_explanation_count: 5
+
+replicate:
+  enabled: false
+
+web:
+  host: 127.0.0.1
+  port: 5000
+  debug: true
+
+render:
+  enabled: true
+  backend: resolve
+  timeline_prefix: enchanted
+  timeline_mode: existing_only
+  append_mode: sequential_exact
+  clean_media_pool_imports: true
+  media_pool_folder_name: YCA Imports
+  import_only_required_media: true
+  video_mode: image
+  audio_strategy: cut_to_duration
+  video_strategy: loop_to_duration
+  video_timing_source: metadata_first
+  image_strategy: resolve_still_duration
+  do_render: false
+  render_dir: ../../runtime/enchanted_melodies/renders
+  width: 1920
+  height: 1080

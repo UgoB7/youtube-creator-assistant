@@ -1,7 +1,7 @@
 profile:
   id: vibes
   display_name: Image Workflow
-  visual_input_mode: image
+  visual_input_mode: image_or_video
 
 paths:
   runtime_root: ../../runtime/vibes
@@ -39,7 +39,26 @@ description:
   audio_explanation_count: 5
 
 replicate:
-  enabled: false
+  enabled: true
+  allow_candidate_generation: false
+  candidate_count: 10
+  prompt_style: mercy_legacy
+  prompt_seed_path: ../../assets/prompts/shepherd_prompts.txt
+  image_model: black-forest-labs/flux-2-max
+  image_payload_style: flux
+  image_output_format: png
+  image_size: "2 MP"
+  image_aspect_ratio: "16:9"
+  image_output_quality: 100
+  image_safety_tolerance: 5
+  video_model: bytedance/seedance-1.5-pro
+  video_fps: 24
+  video_duration: 12
+  video_resolution: 1080p
+  video_aspect_ratio: "16:9"
+  video_camera_fixed: true
+  video_generate_audio: false
+  video_prompt: "no camera movement. no talking. mouth closed. "
 
 web:
   host: 127.0.0.1

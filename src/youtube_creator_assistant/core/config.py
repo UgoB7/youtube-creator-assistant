@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -42,6 +42,9 @@ class WorkflowSettings:
     max_reference_summaries: int = 5
     preferred_reference_count: int = 16
     allow_repeats: bool = True
+    use_title_reference_guidance: bool = True
+    selection_seed_mode: str = "project_stable"
+    audio_extensions: List[str] = field(default_factory=lambda: [".mp3"])
 
 
 @dataclass
@@ -67,6 +70,7 @@ class DescriptionSettings:
 @dataclass
 class ReplicateSettings:
     enabled: bool = False
+    allow_candidate_generation: bool = True
     candidate_count: int = 10
     prompt_style: str = "shepherd_legacy"
     prompt_seed_path: Path = field(default_factory=lambda: Path("./assets/prompts/shepherd_prompts.txt"))

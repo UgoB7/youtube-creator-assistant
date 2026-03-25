@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from youtube_creator_assistant.profiles.enchanted_melodies import PROFILE as ENCHANTED_MELODIES
 from youtube_creator_assistant.profiles.base import ProfileDefinition
 from youtube_creator_assistant.profiles.lofi import PROFILE as LOFI
 from youtube_creator_assistant.profiles.mercy import PROFILE as MERCY
@@ -12,6 +13,7 @@ PROFILE_REGISTRY = {
     SHEPHERD.profile_id: SHEPHERD,
     MERCY.profile_id: MERCY,
     LOFI.profile_id: LOFI,
+    ENCHANTED_MELODIES.profile_id: ENCHANTED_MELODIES,
 }
 
 

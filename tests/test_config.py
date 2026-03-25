@@ -10,12 +10,16 @@ class ConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/vibes.yaml")
         self.assertEqual(settings.profile.id, "vibes")
+        self.assertEqual(settings.profile.visual_input_mode, "image_or_video")
         self.assertEqual(settings.paths.psalms_dir.name, "psalms")
         self.assertEqual(settings.paths.gospel_dir.name, "gospel")
         self.assertTrue(settings.render.enabled)
         self.assertEqual(settings.render.timeline_prefix, "vibes")
         self.assertEqual(settings.render.append_mode, "sequential_exact")
-        self.assertFalse(settings.replicate.enabled)
+        self.assertTrue(settings.replicate.enabled)
+        self.assertFalse(settings.replicate.allow_candidate_generation)
+        self.assertEqual(settings.replicate.image_model, "black-forest-labs/flux-2-max")
+        self.assertEqual(settings.replicate.video_model, "bytedance/seedance-1.5-pro")
         self.assertEqual(settings.description.variant, "vibespro_legacy")
 
     def test_load_shepherd_replicate_config(self):
@@ -33,6 +37,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(get_profile_definition("shepherd").display_name, "Mixed Visual Workflow")
         self.assertEqual(get_profile_definition("mercy").display_name, "Motion-Assisted Workflow")
         self.assertEqual(get_profile_definition("lofi").display_name, "Video Workflow")
+        self.assertEqual(get_profile_definition("enchanted_melodies").display_name, "Enchanted Melodies")
 
     def test_load_mercy_replicate_config(self):
         root = Path(__file__).resolve().parents[1]
@@ -42,6 +47,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.replicate.image_model, "black-forest-labs/flux-2-max")
         self.assertEqual(settings.replicate.image_payload_style, "flux")
         self.assertEqual(settings.render.append_mode, "sequential_exact")
+
+    def test_load_enchanted_melodies_config(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")
+        self.assertEqual(settings.profile.id, "enchanted_melodies")
+        self.assertFalse(settings.workflow.include_gospel)
+        self.assertFalse(settings.workflow.use_title_reference_guidance)
+        self.assertEqual(settings.workflow.selection_seed_mode, "random")
+        self.assertEqual(settings.workflow.audio_extensions, [".wav", ".mp3"])
+        self.assertEqual(settings.paths.psalms_dir.name, "faded")
 
 
 if __name__ == "__main__":

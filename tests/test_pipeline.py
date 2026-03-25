@@ -2,8 +2,10 @@ import base64
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from youtube_creator_assistant.core.config import load_settings
+from youtube_creator_assistant.core.models import AudioTrack, ChapterEntry
 from youtube_creator_assistant.core.pipeline import ContentPipeline
 
 
@@ -23,6 +25,63 @@ class _FakeReplicateProvider:
 
 
 class ContentPipelineTests(unittest.TestCase):
+    def test_build_package_skips_reference_generation_when_disabled_in_config(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "audio"
+            settings.paths.gospel_dir = temp_dir / "assets" / "audio"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            uploaded_image = temp_dir / "uploaded.png"
+            uploaded_image.write_bytes(_PNG_BYTES)
+
+            pipeline = ContentPipeline(settings)
+            project = pipeline.runtime.create_project(uploaded_image)
+
+            pipeline.title_service.generate_reference_preferences_for_titles = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("reference guidance should be disabled")
+            )
+            pipeline.title_service.generate_themes = lambda *_args, **_kwargs: ["Dreamy calm"]
+
+            def fake_build_audio(project_arg, preferred_refs):
+                project_arg.audio_tracks = [
+                    AudioTrack(
+                        kind="psalm",
+                        label="Track - 001",
+                        source_path=settings.paths.psalms_dir / "Track - 001.wav",
+                        copied_path=None,
+                        duration_seconds=10.0,
+                    )
+                ]
+                project_arg.chapters = [ChapterEntry(timestamp="0:00:00", label="Track - 001")]
+                self.assertEqual(preferred_refs, [])
+                return project_arg
+
+            pipeline.audio_service.build_for_project = fake_build_audio
+            pipeline.description_service.build_description = lambda project_arg: project_arg
+            pipeline.thumbnail_service.build_thumbnail = lambda project_arg: project_arg
+            pipeline.render_plan_builder.build_for_project = lambda _project: SimpleNamespace(
+                timeline_name="enchanted-test",
+                write_json=lambda path: path.write_text("{}", encoding="utf-8"),
+            )
+
+            built_project = pipeline.build_package(project.project_id, "Quiet enchanted rest")
+
+            self.assertEqual(built_project.preferred_references, [])
+            self.assertEqual(
+                (built_project.project_dir / "preferred_references.txt").read_text(encoding="utf-8"),
+                "",
+            )
+
     def test_shepherd_uploaded_image_generates_render_video(self):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/shepherd.yaml")

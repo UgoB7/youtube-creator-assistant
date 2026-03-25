@@ -43,7 +43,14 @@ PAGE = """<!doctype html>
   <div class="shell">
     <div class="card">
       <h1>{{ settings.profile.display_name }} MVP</h1>
-      <p class="muted">Upload a visual, or if Replicate is enabled for this profile generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.</p>
+      <p class="muted">
+        Upload a visual.
+        {% if settings.replicate.enabled and settings.replicate.allow_candidate_generation %}
+          Or leave the file empty to generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.
+        {% elif settings.replicate.enabled %}
+          If you upload an image, this profile will also generate a render video from it.
+        {% endif %}
+      </p>
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="flash">{{ messages[0] }}</div>
@@ -51,7 +58,7 @@ PAGE = """<!doctype html>
       {% endwith %}
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
         <input type="file" name="visual" accept="{{ accept_attr }}">
-        {% if settings.replicate.enabled %}
+        {% if settings.replicate.enabled and settings.replicate.allow_candidate_generation %}
           <p class="muted">If you leave the file empty, this profile will generate {{ settings.replicate.candidate_count }} candidate images first, then you can pick one.</p>
         {% endif %}
         <button type="submit">Create project</button>
@@ -240,6 +247,7 @@ def create_app(config_path: Path) -> Flask:
     settings = load_settings(config_path)
     pipeline = ContentPipeline(settings)
     app = Flask(__name__)
+    app.pipeline = pipeline
     app.secret_key = "youtube-creator-assistant-dev"
     accept_attr = {
         "image": ".png,.jpg,.jpeg,.webp",
@@ -291,12 +299,16 @@ def create_app(config_path: Path) -> Flask:
             temp_path = incoming_dir / filename
             uploaded.save(temp_path)
             project = pipeline.create_project(temp_path)
-        elif settings.replicate.enabled:
+        elif settings.replicate.enabled and settings.replicate.allow_candidate_generation:
             batch = pipeline.create_candidate_batch()
             flash(f"Generated {len(batch.candidates)} {settings.profile.id} image candidates. Choose one to continue.")
             return redirect(url_for("index", batch_id=batch.batch_id))
         else:
-            flash("Please upload a visual file, or use a profile with Replicate enabled.")
+            flash(
+                "Please upload a visual file."
+                if settings.replicate.enabled
+                else "Please upload a visual file, or use a profile with Replicate enabled."
+            )
             return redirect(url_for("index"))
         return redirect(url_for("index", project_id=project.project_id))
 
