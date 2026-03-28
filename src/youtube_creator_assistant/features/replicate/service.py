@@ -78,7 +78,7 @@ class ReplicateWorkflowService:
         prompts = self._openai_generate_prompts(seeds, 1)
         if not prompts:
             raise RuntimeError("OpenAI did not return a usable image prompt.")
-        prompt = prompts[0]
+        prompt = self._finalize_image_prompt(prompts[0])
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         profile_id = self.settings.profile.id
@@ -114,63 +114,40 @@ class ReplicateWorkflowService:
         system_prompt = (prompt_settings.system_prompt or "").strip()
         if not system_prompt:
             raise RuntimeError("The profile is missing replicate.visual_prompt_generation.system_prompt.")
+        batch_size = self._resolve_prompt_batch_size(count, mode="visual")
+        ordinal_batches = self._build_ordinal_batches(count, batch_size)
+        slots: list[list[str] | None] = [None] * len(ordinal_batches)
 
-        def _normalize_prompt(text: str) -> str:
-            return re.sub(r"\s+", " ", text).strip().casefold()
-
-        def _one_prompt(ordinal: int) -> str:
+        def _one_batch(batch_index: int, ordinals: list[int]) -> list[str]:
             response = self.openai_provider.client().responses.create(
                 model=self.settings.openai.model,
-                input=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": self._visual_prompt_user_text(ordinal, count)},
-                            *visual_prompt_parts,
-                        ],
-                    },
-                ],
+                input=self._build_visual_prompt_request(
+                    system_prompt=system_prompt,
+                    visual_prompt_parts=visual_prompt_parts,
+                    ordinals=ordinals,
+                    total=count,
+                ),
             )
-            prompt = self._extract_visual_prompt(response.output_text or "")
-            if not prompt:
-                raise RuntimeError(f"OpenAI did not return a usable visual prompt (item {ordinal}/{count}).")
-            return prompt
+            prompts = self._extract_visual_prompts(response.output_text or "", len(ordinals))
+            if len(prompts) < len(ordinals):
+                raise RuntimeError(
+                    f"OpenAI did not return enough visual prompts for batch {batch_index + 1}/{len(ordinal_batches)}."
+                )
+            return prompts[: len(ordinals)]
 
-        max_workers = max(1, min(count, 4))
-        slots: list[str | None] = [None] * count
+        max_workers = self._resolve_prompt_parallel_requests(len(ordinal_batches))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_index = {executor.submit(_one_prompt, index + 1): index for index in range(count)}
+            future_to_index = {
+                executor.submit(_one_batch, batch_index, ordinals): batch_index
+                for batch_index, ordinals in enumerate(ordinal_batches)
+            }
             for future in concurrent.futures.as_completed(future_to_index):
                 slots[future_to_index[future]] = future.result()
 
-        prompts: list[str] = []
-        seen: set[str] = set()
-        for item in slots:
-            if not item:
-                continue
-            normalized = _normalize_prompt(item)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            prompts.append(item)
-
-        extra_ordinal = count + 1
-        extra_attempts = 0
-        max_extra_attempts = max(4, count * 3)
-        while len(prompts) < count and extra_attempts < max_extra_attempts:
-            extra_attempts += 1
-            item = _one_prompt(extra_ordinal)
-            extra_ordinal += 1
-            normalized = _normalize_prompt(item)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            prompts.append(item)
-
-        if prompts:
+        prompts = [prompt for batch in slots if batch for prompt in batch]
+        if len(prompts) >= count:
             return prompts[:count]
-        raise RuntimeError("OpenAI did not return usable visual prompts.")
+        raise RuntimeError("OpenAI did not return enough visual prompts.")
 
     def _openai_generate_prompts_shepherd(self, examples: list[str], count: int) -> list[str]:
         def _normalize_prompt(text: str) -> str:
@@ -238,16 +215,42 @@ class ReplicateWorkflowService:
         raise RuntimeError("OpenAI did not return usable image prompts.")
 
     def _openai_generate_prompts_mercy(self, examples: list[str], count: int) -> list[str]:
-        prompt = self._build_mercy_prompt_generation_prompt(examples, count)
-        for _ in range(2):
-            response = self.openai_provider.client().responses.create(
-                model=self.settings.openai.model,
-                input=[{"role": "user", "content": prompt}],
+        batch_size = self._resolve_prompt_batch_size(count, mode="mercy")
+        ordinal_batches = self._build_ordinal_batches(count, batch_size)
+        slots: list[list[str] | None] = [None] * len(ordinal_batches)
+
+        def _one_batch(batch_index: int, ordinals: list[int]) -> list[str]:
+            prompt = self._build_mercy_prompt_generation_prompt(
+                examples,
+                len(ordinals),
+                ordinal_start=ordinals[0],
+                total=count,
             )
-            raw = (response.output_text or "").strip()
-            options = self._parse_prompt_options(raw, count)
-            if len(options) >= count:
-                return options[:count]
+            for _ in range(2):
+                response = self.openai_provider.client().responses.create(
+                    model=self.settings.openai.model,
+                    input=[{"role": "user", "content": prompt}],
+                )
+                raw = (response.output_text or "").strip()
+                options = self._parse_prompt_options(raw, len(ordinals))
+                if len(options) >= len(ordinals):
+                    return options[: len(ordinals)]
+            raise RuntimeError(
+                f"OpenAI did not return enough image prompts for batch {batch_index + 1}/{len(ordinal_batches)}."
+            )
+
+        max_workers = self._resolve_prompt_parallel_requests(len(ordinal_batches))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(_one_batch, batch_index, ordinals): batch_index
+                for batch_index, ordinals in enumerate(ordinal_batches)
+            }
+            for future in concurrent.futures.as_completed(future_to_index):
+                slots[future_to_index[future]] = future.result()
+
+        prompts = [prompt for batch in slots if batch for prompt in batch]
+        if len(prompts) >= count:
+            return prompts[:count]
         raise RuntimeError("OpenAI did not return enough image prompts.")
 
     def _build_shepherd_prompt_generation_prompt(self, examples: list[str], ordinal: int, total: int) -> str:
@@ -261,9 +264,26 @@ class ReplicateWorkflowService:
         ]
         return "\n".join(lines)
 
-    def _build_mercy_prompt_generation_prompt(self, examples: list[str], count: int) -> str:
+    def _build_mercy_prompt_generation_prompt(
+        self,
+        examples: list[str],
+        count: int,
+        *,
+        ordinal_start: int = 1,
+        total: int | None = None,
+    ) -> str:
         lines = [
             f"Write EXACTLY {count} NEW image prompts in English.",
+        ]
+        if total is not None and total > count:
+            lines.extend(
+                [
+                    f"This request covers items {ordinal_start} to {ordinal_start + count - 1} of {total}.",
+                    "Make the prompts distinct from the likely outputs for the other item ranges in the same batch.",
+                ]
+            )
+        lines.extend(
+            [
             "Match the distribution of length, structure, adjective density, and scene composition from the examples.",
             "Keep the same family of themes and visual ingredients as the examples.",
             "Do not copy any exact sequence of words from the examples.",
@@ -272,7 +292,8 @@ class ReplicateWorkflowService:
             "",
             "Examples:",
             *[f"- {example}" for example in examples],
-        ]
+            ]
+        )
         return "\n".join(lines)
 
     def _parse_prompt_options(self, raw: str, count: int) -> list[str]:
@@ -316,12 +337,13 @@ class ReplicateWorkflowService:
         image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
         candidates: list[ReplicateImageCandidate] = []
         for index, prompt in enumerate(prompts, start=1):
+            final_prompt = self._finalize_image_prompt(prompt)
             image_path = batch_dir / f"candidate_{index:02d}.{image_ext}"
-            image_path.write_bytes(self.replicate_provider.generate_image_bytes(prompt))
+            image_path.write_bytes(self.replicate_provider.generate_image_bytes(final_prompt))
             candidates.append(
                 ReplicateImageCandidate(
                     candidate_id=f"candidate-{index:02d}",
-                    prompt=prompt,
+                    prompt=final_prompt,
                     image_path=image_path,
                     label=f"Candidate {index:02d}",
                 )
@@ -337,6 +359,19 @@ class ReplicateWorkflowService:
         )
         (batch.batch_dir / "batch.json").write_text(json.dumps(batch.to_dict(), indent=2), encoding="utf-8")
         return batch
+
+    def _finalize_image_prompt(self, prompt: str) -> str:
+        base = (prompt or "").strip()
+        prefix = (self.settings.replicate.image_prompt_prefix or "").strip()
+        suffix = (self.settings.replicate.image_prompt_suffix or "").strip()
+        parts: list[str] = []
+        if prefix and prefix not in base:
+            parts.append(prefix)
+        if base:
+            parts.append(base)
+        if suffix and suffix not in base:
+            parts.append(suffix)
+        return "\n\n".join(part for part in parts if part)
 
     def _prepare_visual_source_for_batch(
         self,
@@ -393,6 +428,9 @@ class ReplicateWorkflowService:
         ]
 
     def _visual_prompt_user_text(self, ordinal: int, total: int) -> str:
+        return self._visual_prompt_batch_user_text([ordinal], total)
+
+    def _visual_prompt_batch_user_text(self, ordinals: list[int], total: int) -> str:
         prompt_settings = self.settings.replicate.visual_prompt_generation
         lines = []
         user_prompt = (prompt_settings.user_prompt or "").strip()
@@ -400,13 +438,23 @@ class ReplicateWorkflowService:
             lines.append(user_prompt)
         variation_prompt = (prompt_settings.variation_prompt or "").strip()
         if variation_prompt:
-            lines.append(variation_prompt.format(ordinal=ordinal, total=total))
+            for ordinal in ordinals:
+                lines.append(variation_prompt.format(ordinal=ordinal, total=total))
+        if len(ordinals) > 1:
+            lines.append(
+                f'Return EXACTLY {len(ordinals)} prompts as strict JSON: {{"prompts": ["prompt1", "prompt2", "..."]}}.'
+            )
+            lines.append("Keep the prompts in the same order as the candidate numbers above.")
         return "\n\n".join(lines).strip()
 
     def _extract_visual_prompt(self, raw: str) -> str:
+        prompts = self._extract_visual_prompts(raw, 1)
+        return prompts[0] if prompts else ""
+
+    def _extract_visual_prompts(self, raw: str, count: int) -> list[str]:
         text = (raw or "").strip()
         if not text:
-            return ""
+            return []
         if text.startswith("```"):
             text = text.strip("`").strip()
             if text.lower().startswith("json"):
@@ -415,26 +463,80 @@ class ReplicateWorkflowService:
             payload = json.loads(text)
             if isinstance(payload, dict):
                 if isinstance(payload.get("prompt"), str):
-                    return payload["prompt"].strip()
+                    cleaned = dedupe_preserve_order([payload["prompt"].strip()])
+                    return cleaned[:count]
                 prompts = payload.get("prompts")
                 if isinstance(prompts, list):
                     cleaned = dedupe_preserve_order(
                         [str(item).strip() for item in prompts if str(item).strip()]
                     )
-                    if cleaned:
-                        return cleaned[0]
+                    return cleaned[:count]
             if isinstance(payload, list):
                 cleaned = dedupe_preserve_order(
                     [str(item).strip() for item in payload if str(item).strip()]
                 )
-                if cleaned:
-                    return cleaned[0]
+                return cleaned[:count]
         except Exception:
             pass
 
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         cleaned_lines = [line.strip("-* \t") for line in lines]
-        return " ".join(cleaned_lines).strip()
+        if count <= 1:
+            single = " ".join(cleaned_lines).strip()
+            return [single] if single else []
+        return cleaned_lines[:count]
+
+    def _build_visual_prompt_request(
+        self,
+        *,
+        system_prompt: str,
+        visual_prompt_parts: list[dict],
+        ordinals: list[int],
+        total: int,
+    ) -> list[dict]:
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        if len(ordinals) > 1:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"For this request, return EXACTLY {len(ordinals)} prompts as strict JSON with a "
+                        '"prompts" array. Each prompt must be a single polished English paragraph.'
+                    ),
+                }
+            )
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": self._visual_prompt_batch_user_text(ordinals, total)},
+                    *visual_prompt_parts,
+                ],
+            }
+        )
+        return messages
+
+    def _resolve_prompt_batch_size(self, count: int, *, mode: str) -> int:
+        configured = int(self.settings.replicate.prompt_batch_size or 0)
+        if configured > 0:
+            return max(1, min(count, configured))
+        if mode == "mercy":
+            return count
+        return 1
+
+    def _resolve_prompt_parallel_requests(self, batch_count: int) -> int:
+        configured = int(self.settings.replicate.prompt_parallel_requests or 4)
+        return max(1, min(batch_count, configured))
+
+    @staticmethod
+    def _build_ordinal_batches(total: int, batch_size: int) -> list[list[int]]:
+        batches: list[list[int]] = []
+        current = 1
+        while current <= total:
+            stop = min(total, current + batch_size - 1)
+            batches.append(list(range(current, stop + 1)))
+            current = stop + 1
+        return batches
 
     def _maybe_reuse_candidate_batch(
         self,

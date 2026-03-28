@@ -249,6 +249,10 @@ class ReplicateSettings:
     allow_candidate_generation: bool = True
     candidate_count: int = 10
     prompt_style: str = "shepherd_legacy"
+    prompt_batch_size: int = 0
+    prompt_parallel_requests: int = 4
+    image_prompt_prefix: str = ""
+    image_prompt_suffix: str = ""
     prompt_seed_path: Path = field(default_factory=lambda: Path("./assets/prompts/shepherd_prompts.txt"))
     image_model: str = "bytedance/seedream-4"
     image_payload_style: str = "seedream"

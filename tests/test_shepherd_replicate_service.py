@@ -1,5 +1,6 @@
 import base64
 import json
+import threading
 import unittest
 from pathlib import Path
 
@@ -21,14 +22,16 @@ class _FakeOpenAIClient:
     def __init__(self, outputs):
         self._outputs = list(outputs)
         self._index = 0
+        self._lock = threading.Lock()
         self.responses = self
 
     def create(self, **_kwargs):
-        if self._index >= len(self._outputs):
-            value = self._outputs[-1]
-        else:
-            value = self._outputs[self._index]
-        self._index += 1
+        with self._lock:
+            if self._index >= len(self._outputs):
+                value = self._outputs[-1]
+            else:
+                value = self._outputs[self._index]
+            self._index += 1
         return _FakeResponse(value)
 
 
@@ -125,6 +128,106 @@ class ShepherdReplicateServiceTests(unittest.TestCase):
         assert batch.source_visual_asset is not None
         self.assertEqual(batch.source_visual_asset.kind, "image")
         self.assertTrue(batch.source_visual_asset.path.exists())
+
+    def test_generate_candidate_batch_from_visual_can_split_prompt_requests_into_batches(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.visual_prompt_generation.enabled = True
+        settings.replicate.visual_prompt_generation.system_prompt = "Return prompts."
+        settings.replicate.visual_prompt_generation.user_prompt = "Analyze the image."
+        settings.replicate.visual_prompt_generation.variation_prompt = "Candidate {ordinal}/{total}."
+        settings.replicate.prompt_batch_size = 5
+        settings.replicate.prompt_parallel_requests = 4
+
+        outputs = [
+            json.dumps({"prompts": [f"Visual Prompt {index}" for index in range(1, 6)]}),
+            json.dumps({"prompts": [f"Visual Prompt {index}" for index in range(6, 11)]}),
+        ]
+        provider = _FakeOpenAIProvider(outputs)
+        replicate_provider = _FakeReplicateProvider()
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=provider,
+            replicate_provider=replicate_provider,
+        )
+
+        temp_root = root / "runtime" / "test-visual-batched-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        image_path = temp_root / "source.png"
+        image_path.write_bytes(_PNG_BYTES)
+        batch = service.generate_candidate_batch_from_visual(temp_root, image_path, count=10)
+
+        self.assertEqual(len(batch.candidates), 10)
+        self.assertCountEqual(replicate_provider.prompts, [f"Visual Prompt {index}" for index in range(1, 11)])
+        self.assertEqual(provider.client()._index, 2)
+
+    def test_generated_candidate_prompts_can_append_required_suffix(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.visual_prompt_generation.enabled = True
+        settings.replicate.visual_prompt_generation.system_prompt = "Return one prompt only."
+        settings.replicate.visual_prompt_generation.user_prompt = "Analyze the image."
+        settings.replicate.visual_prompt_generation.variation_prompt = "Candidate {ordinal}/{total}."
+        settings.replicate.image_prompt_prefix = (
+            "Additional style requirements:\n"
+            "- The lineart should be soft and colored."
+        )
+        settings.replicate.image_prompt_suffix = (
+            "Jesus requirements:\n"
+            "- Shoulder-length wavy brown hair, well-defined beard and moustache, calm serene expression.\n"
+            "\n"
+            "Additional required changes:\n"
+            "- Add subtle Christian candles."
+        )
+
+        replicate_provider = _FakeReplicateProvider()
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=_FakeOpenAIProvider(["Visual Prompt Base"]),
+            replicate_provider=replicate_provider,
+        )
+
+        temp_root = root / "runtime" / "test-visual-suffix-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        image_path = temp_root / "source.png"
+        image_path.write_bytes(_PNG_BYTES)
+        batch = service.generate_candidate_batch_from_visual(temp_root, image_path, count=1)
+
+        self.assertEqual(len(batch.candidates), 1)
+        self.assertTrue(batch.candidates[0].prompt.startswith("Additional style requirements:"))
+        self.assertIn("Visual Prompt Base", batch.candidates[0].prompt)
+        self.assertIn("Jesus requirements:", batch.candidates[0].prompt)
+        self.assertIn("Additional required changes:", batch.candidates[0].prompt)
+        self.assertEqual(replicate_provider.prompts[0], batch.candidates[0].prompt)
+
+    def test_mercy_prompt_generation_can_split_into_parallel_batches(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/mercy.yaml")
+        settings.replicate.candidate_count = 20
+        settings.replicate.prompt_batch_size = 5
+        settings.replicate.prompt_parallel_requests = 4
+
+        outputs = [
+            json.dumps({"options": [f"Mercy Prompt {index}" for index in range(1, 6)]}),
+            json.dumps({"options": [f"Mercy Prompt {index}" for index in range(6, 11)]}),
+            json.dumps({"options": [f"Mercy Prompt {index}" for index in range(11, 16)]}),
+            json.dumps({"options": [f"Mercy Prompt {index}" for index in range(16, 21)]}),
+        ]
+        provider = _FakeOpenAIProvider(outputs)
+        replicate_provider = _FakeReplicateProvider()
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=provider,
+            replicate_provider=replicate_provider,
+        )
+
+        temp_root = root / "runtime" / "test-mercy-batched-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        batch = service.generate_candidate_batch(temp_root, count=20)
+
+        self.assertEqual(len(batch.candidates), 20)
+        self.assertCountEqual(replicate_provider.prompts, [f"Mercy Prompt {index}" for index in range(1, 21)])
+        self.assertEqual(provider.client()._index, 4)
 
     def test_debug_reuses_explicit_candidate_batch_without_regeneration(self):
         root = Path(__file__).resolve().parents[1]

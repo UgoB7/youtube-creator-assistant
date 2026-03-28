@@ -68,6 +68,13 @@ replicate:
   allow_candidate_generation: true
   candidate_count: 20
   prompt_style: mercy_legacy
+  prompt_batch_size: 5
+  prompt_parallel_requests: 4
+  image_prompt_prefix: |
+    Additional style requirements:
+    - The image should follow a 90s Japanese anime aesthetic, heavily inspired by cozy and detailed Studio Ghibli-like backgrounds.
+    - The lineart should be soft and colored.
+    - The rendering should use flat cel-shading combined with soft digital gradients to define volume and depth.
   prompt_seed_path: ../../../yt/LoFi_mac/prompts.txt
   image_model: bytedance/seedream-4
   image_payload_style: seedream
@@ -109,11 +116,6 @@ replicate:
       - On the circular earcup area of the headphones, add the exact text "LoFi Jesus" in small, discreet lettering when headphones are visible.
       - Add subtle Christian candles and one visible cross mounted on a wall in the decor when that can be done naturally and coherently with the scene lighting.
 
-      Additional style requirements:
-      - The image should follow a 90s Japanese anime aesthetic, heavily inspired by cozy and detailed Studio Ghibli-like backgrounds.
-      - The lineart should be soft and colored.
-      - The rendering should use flat cel-shading combined with soft digital gradients to define volume and depth.
-
       Output format:
       - Return only the final polished generation prompt as a single paragraph in English.
       - Do not include any other commentary.
@@ -123,8 +125,8 @@ replicate:
       Generate candidate {ordinal} of {total}.
       Keep the core composition and constraints identical, but make this version a distinct faithful variation with subtle differences in secondary details, atmosphere, or stylization.
   debug:
-    enabled: true
-    reuse_candidate_batch: true
+    enabled: false
+    reuse_candidate_batch: false
     candidate_batch_id: lofi-candidates-20260328-061400
     candidate_batch_strategy: explicit_or_latest
     reuse_render_video: true
