@@ -118,6 +118,11 @@ class ContentPipeline:
         debug_video_path = self._resolve_debug_render_video_path()
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         if debug_video_path is not None:
+            try:
+                if destination_path.exists() and destination_path.samefile(debug_video_path):
+                    return destination_path
+            except FileNotFoundError:
+                pass
             shutil.copy2(debug_video_path, destination_path)
             return destination_path
         destination_path.write_bytes(self.replicate_provider.generate_video_bytes(source_path))
