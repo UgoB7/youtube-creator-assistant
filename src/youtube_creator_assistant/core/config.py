@@ -182,6 +182,58 @@ class DescriptionSettings:
 
 
 @dataclass
+class VisualPromptGenerationSettings:
+    enabled: bool = False
+    system_prompt: str = ""
+    user_prompt: str = "Analyze this image and return only the final single-paragraph generation prompt."
+    variation_prompt: str = (
+        "Generate one distinct prompt variation for candidate {ordinal} of {total}. "
+        "Keep the core scene constraints intact while varying tasteful secondary details."
+    )
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "VisualPromptGenerationSettings":
+        payload = data or {}
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            system_prompt=str(payload.get("system_prompt", "")),
+            user_prompt=str(
+                payload.get(
+                    "user_prompt",
+                    "Analyze this image and return only the final single-paragraph generation prompt.",
+                )
+            ),
+            variation_prompt=str(
+                payload.get(
+                    "variation_prompt",
+                    (
+                        "Generate one distinct prompt variation for candidate {ordinal} of {total}. "
+                        "Keep the core scene constraints intact while varying tasteful secondary details."
+                    ),
+                )
+            ),
+        )
+
+
+@dataclass
+class ReplicateDebugSettings:
+    enabled: bool = False
+    reuse_candidate_batch: bool = False
+    candidate_batch_id: str = ""
+    candidate_batch_strategy: str = "explicit_or_latest"
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ReplicateDebugSettings":
+        payload = data or {}
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            reuse_candidate_batch=bool(payload.get("reuse_candidate_batch", False)),
+            candidate_batch_id=str(payload.get("candidate_batch_id", "")),
+            candidate_batch_strategy=str(payload.get("candidate_batch_strategy", "explicit_or_latest")),
+        )
+
+
+@dataclass
 class ReplicateSettings:
     enabled: bool = False
     allow_candidate_generation: bool = True
@@ -208,6 +260,30 @@ class ReplicateSettings:
     video_camera_fixed: bool = True
     video_generate_audio: bool = False
     video_prompt: str = "no camera movement. campfire. no smoke."
+    visual_prompt_generation: VisualPromptGenerationSettings = field(
+        default_factory=VisualPromptGenerationSettings
+    )
+    debug: ReplicateDebugSettings = field(default_factory=ReplicateDebugSettings)
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Optional[Dict[str, Any]],
+        *,
+        base_dir: Path,
+    ) -> "ReplicateSettings":
+        payload = dict(data or {})
+        if "prompt_seed_path" in payload:
+            payload["prompt_seed_path"] = _expand_path(payload["prompt_seed_path"], base_dir)
+        visual_prompt_generation = VisualPromptGenerationSettings.from_dict(
+            payload.pop("visual_prompt_generation", None)
+        )
+        debug = ReplicateDebugSettings.from_dict(payload.pop("debug", None))
+        return cls(
+            **payload,
+            visual_prompt_generation=visual_prompt_generation,
+            debug=debug,
+        )
 
 
 @dataclass
@@ -264,11 +340,6 @@ def load_settings(config_path: str | Path) -> Settings:
     openai_data: Dict[str, Any] = data.get("openai", {})
     description_data: Dict[str, Any] = data.get("description", {})
     replicate_data: Dict[str, Any] = data.get("replicate", {})
-    if "prompt_seed_path" in replicate_data:
-        replicate_data = {
-            **replicate_data,
-            "prompt_seed_path": _expand_path(replicate_data["prompt_seed_path"], base_dir),
-        }
     web_data: Dict[str, Any] = data.get("web", {})
     render_data: Dict[str, Any] = data.get("render", {})
     if "render_dir" in render_data:
@@ -297,7 +368,7 @@ def load_settings(config_path: str | Path) -> Settings:
         thumbnail=ThumbnailSettings(**thumbnail_data),
         openai=OpenAISettings.from_dict(openai_data),
         description=DescriptionSettings(**description_data),
-        replicate=ReplicateSettings(**replicate_data),
+        replicate=ReplicateSettings.from_dict(replicate_data, base_dir=base_dir),
         web=WebSettings(**web_data),
         render=RenderSettings(**render_data),
     )

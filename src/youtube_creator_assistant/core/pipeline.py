@@ -57,6 +57,15 @@ class ContentPipeline:
             )
         return self.runtime.create_project(source_path)
 
+    def should_generate_candidate_batch_from_uploaded_visual(self, visual_source: str | Path) -> bool:
+        source_path = Path(visual_source).expanduser().resolve()
+        return (
+            self.settings.replicate.enabled
+            and self.settings.replicate.visual_prompt_generation.enabled
+            and self.settings.profile.visual_input_mode in {"image", "image_or_video"}
+            and source_path.exists()
+        )
+
     def regenerate_project_render_video(self, project_id: str):
         project = self.runtime.load_project(project_id)
         if not self.settings.replicate.enabled:
@@ -108,9 +117,26 @@ class ContentPipeline:
     def create_candidate_batch(self, count: int | None = None) -> ReplicateImageBatch:
         if not self.settings.replicate.enabled:
             raise RuntimeError("Replicate is disabled for this profile.")
+        self._sync_replicate_workflow_dependencies()
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
         return self.replicate_workflow_service.generate_candidate_batch(generated_dir, count=count)
+
+    def create_candidate_batch_from_visual(
+        self,
+        visual_source: str | Path,
+        count: int | None = None,
+    ) -> ReplicateImageBatch:
+        if not self.settings.replicate.enabled:
+            raise RuntimeError("Replicate is disabled for this profile.")
+        self._sync_replicate_workflow_dependencies()
+        generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        return self.replicate_workflow_service.generate_candidate_batch_from_visual(
+            generated_dir,
+            Path(visual_source),
+            count=count,
+        )
 
     def load_candidate_batch(self, batch_id: str) -> ReplicateImageBatch:
         batch_path = self.settings.paths.incoming_dir / "replicate_generated" / batch_id / "batch.json"
@@ -142,6 +168,7 @@ class ContentPipeline:
     def create_project_from_seed_prompts(self):
         if not self.settings.replicate.enabled:
             raise RuntimeError("Replicate is disabled for this profile.")
+        self._sync_replicate_workflow_dependencies()
 
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
@@ -300,3 +327,7 @@ class ContentPipeline:
             int(getattr(self.settings.workflow, "max_selected_titles", self.MAX_SELECTED_TITLES) or self.MAX_SELECTED_TITLES),
         )
         return cleaned[:max_selected_titles]
+
+    def _sync_replicate_workflow_dependencies(self) -> None:
+        self.replicate_workflow_service.replicate_provider = self.replicate_provider
+        self.replicate_workflow_service.openai_provider = self.openai_provider

@@ -23,9 +23,16 @@ PAGE = """<!doctype html>
     .shell { max-width: 1120px; margin: 0 auto; }
     .card { background: white; border: 1px solid #e5e7eb; border-radius: 18px; padding: 18px; margin-bottom: 18px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06); }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
-    .candidate { border: 1px solid #e5e7eb; border-radius: 14px; padding: 10px; background: #fcfcfd; }
-    .candidate img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .candidate { border: 1px solid #e5e7eb; border-radius: 14px; padding: 12px; background: #fcfcfd; }
+    .candidate img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; }
+    .candidate-title { margin: 10px 0 0; font-size: 15px; line-height: 1.35; }
+    .candidate-batch-card .candidate-prompt { display: none; }
+    .candidate-batch-card.show-prompts .candidate-prompt { display: block; }
+    .candidate-prompt { margin: 10px 0 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+    .candidate-tools { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
+    .toggle-check { margin: 0; width: 16px; height: 16px; }
+    .toggle-label { display: inline-flex; align-items: center; gap: 8px; color: #6b7280; font-size: 13px; cursor: pointer; user-select: none; }
     .muted { color: #6b7280; font-size: 14px; }
     .flash { color: #991b1b; margin-bottom: 12px; }
     img { max-width: 100%; border-radius: 14px; }
@@ -45,7 +52,9 @@ PAGE = """<!doctype html>
       <h1>{{ settings.profile.display_name }} MVP</h1>
       <p class="muted">
         Upload a visual.
-        {% if settings.replicate.enabled and settings.replicate.allow_candidate_generation %}
+        {% if settings.replicate.enabled and settings.replicate.visual_prompt_generation.enabled %}
+          This profile will turn the uploaded visual into LLM-generated image prompts, render candidate images, then let you choose one before generating the video and the final project.
+        {% elif settings.replicate.enabled and settings.replicate.allow_candidate_generation %}
           Or leave the file empty to generate a batch of candidate images from the local prompt seeds, select one, then create the video and the project from that chosen image.
         {% elif settings.replicate.enabled %}
           If you upload an image, this profile will also generate a render video from it.
@@ -58,6 +67,9 @@ PAGE = """<!doctype html>
       {% endwith %}
       <form method="post" action="{{ url_for('create_project_route') }}" enctype="multipart/form-data">
         <input type="file" name="visual" accept="{{ accept_attr }}">
+        {% if settings.replicate.enabled and settings.replicate.visual_prompt_generation.enabled %}
+          <p class="muted">If you upload a visual, this profile will generate {{ settings.replicate.candidate_count }} prompt-based image candidates from it first.</p>
+        {% endif %}
         {% if settings.replicate.enabled and settings.replicate.allow_candidate_generation %}
           <p class="muted">If you leave the file empty, this profile will generate {{ settings.replicate.candidate_count }} candidate images first, then you can pick one.</p>
         {% endif %}
@@ -66,15 +78,31 @@ PAGE = """<!doctype html>
     </div>
 
     {% if candidate_batch %}
-      <div class="card">
+      <div class="card candidate-batch-card">
         <h2>{{ settings.profile.display_name }} Candidates</h2>
         <p class="muted">Batch {{ candidate_batch.batch_id }}. Choose one image to create the video and the project.</p>
+        {% if candidate_batch.source_visual_asset %}
+          <p class="muted">Source visual used for prompt generation:</p>
+          {% if candidate_batch.source_visual_asset.kind == "image" %}
+            <img src="{{ url_for('candidate_batch_file', batch_id=candidate_batch.batch_id, filename=candidate_batch.source_visual_asset.path.name) }}" alt="candidate source visual">
+          {% elif candidate_batch.source_visual_asset.kind == "video" %}
+            <video controls loop autoplay muted playsinline preload="metadata">
+              <source src="{{ url_for('candidate_batch_file', batch_id=candidate_batch.batch_id, filename=candidate_batch.source_visual_asset.path.name) }}">
+            </video>
+          {% endif %}
+        {% endif %}
+        <div class="candidate-tools">
+          <label class="toggle-label">
+            <input id="show-candidate-prompts" class="toggle-check" type="checkbox">
+            Show prompts
+          </label>
+        </div>
         <div class="gallery">
           {% for candidate in candidate_batch.candidates %}
             <form class="candidate" method="post" action="{{ url_for('select_candidate_route', batch_id=candidate_batch.batch_id) }}">
               <img src="{{ url_for('candidate_batch_file', batch_id=candidate_batch.batch_id, filename=candidate.image_path.name) }}" alt="{{ candidate.candidate_id }}">
-              <p><strong>{{ candidate.candidate_id }}</strong></p>
-              <p class="muted">{{ candidate.prompt }}</p>
+              <p class="candidate-title"><strong>{{ candidate.label or candidate.candidate_id }}</strong></p>
+              <p class="candidate-prompt muted">{{ candidate.prompt }}</p>
               <input type="hidden" name="candidate_id" value="{{ candidate.candidate_id }}">
               <button type="submit">Use this image</button>
             </form>
@@ -242,6 +270,16 @@ PAGE = """<!doctype html>
       </div>
     {% endif %}
   </div>
+  <script>
+    (() => {
+      const toggle = document.getElementById("show-candidate-prompts");
+      const card = document.querySelector(".candidate-batch-card");
+      if (!toggle || !card) return;
+      const sync = () => card.classList.toggle("show-prompts", toggle.checked);
+      toggle.addEventListener("change", sync);
+      sync();
+    })();
+  </script>
 </body>
 </html>"""
 
@@ -365,6 +403,12 @@ def create_app(config_path: Path) -> Flask:
             filename = secure_filename(uploaded.filename) or "upload.png"
             temp_path = incoming_dir / filename
             uploaded.save(temp_path)
+            if pipeline.should_generate_candidate_batch_from_uploaded_visual(temp_path):
+                batch = pipeline.create_candidate_batch_from_visual(temp_path)
+                flash(
+                    f"Generated {len(batch.candidates)} {settings.profile.id} image candidates from the uploaded visual. Choose one to continue."
+                )
+                return redirect(url_for("index", batch_id=batch.batch_id))
             project = pipeline.create_project(temp_path)
         elif settings.replicate.enabled and settings.replicate.allow_candidate_generation:
             batch = pipeline.create_candidate_batch()

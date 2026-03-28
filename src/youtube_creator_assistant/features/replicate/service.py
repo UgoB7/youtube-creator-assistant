@@ -3,11 +3,13 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from youtube_creator_assistant.core.config import Settings
-from youtube_creator_assistant.core.models import ReplicateImageBatch, ReplicateImageCandidate
+from youtube_creator_assistant.core.models import ReplicateImageBatch, ReplicateImageCandidate, VisualAsset
+from youtube_creator_assistant.core.utils import dedupe_preserve_order, extract_video_frame, img_to_data_url
 from youtube_creator_assistant.providers.openai_client import OpenAIProvider
 from youtube_creator_assistant.providers.replicate import ReplicateProvider
 
@@ -25,36 +27,51 @@ class ReplicateWorkflowService:
 
     def generate_candidate_batch(self, target_dir: Path, count: int | None = None) -> ReplicateImageBatch:
         requested = max(1, int(count or self.settings.replicate.candidate_count or 10))
+        cached = self._maybe_reuse_candidate_batch(target_dir, requested=requested)
+        if cached is not None:
+            return cached
         seeds = self._load_prompt_seeds(self.settings.replicate.prompt_seed_path)
         prompts = self._openai_generate_prompts(seeds, requested)
 
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        batch_id = f"{self.settings.profile.id}-candidates-{stamp}"
-        batch_dir = target_dir / batch_id
-        batch_dir.mkdir(parents=True, exist_ok=True)
-        image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
+        batch_id, batch_dir = self._create_batch_dir(target_dir)
 
         candidates: list[ReplicateImageCandidate] = []
-        for index, prompt in enumerate(prompts, start=1):
-            image_path = batch_dir / f"candidate_{index:02d}.{image_ext}"
-            image_path.write_bytes(self.replicate_provider.generate_image_bytes(prompt))
-            candidates.append(
-                ReplicateImageCandidate(
-                    candidate_id=f"candidate-{index:02d}",
-                    prompt=prompt,
-                    image_path=image_path,
-                )
-            )
-
-        batch = ReplicateImageBatch(
+        return self._write_candidate_batch(
             batch_id=batch_id,
-            profile_id=self.settings.profile.id,
             batch_dir=batch_dir,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            candidates=candidates,
+            prompts=prompts,
+            source_visual_asset=None,
         )
-        (batch.batch_dir / "batch.json").write_text(json.dumps(batch.to_dict(), indent=2), encoding="utf-8")
-        return batch
+
+    def generate_candidate_batch_from_visual(
+        self,
+        target_dir: Path,
+        visual_source: Path,
+        count: int | None = None,
+    ) -> ReplicateImageBatch:
+        prompt_settings = self.settings.replicate.visual_prompt_generation
+        if not prompt_settings.enabled:
+            raise RuntimeError("Visual prompt generation is disabled for this profile.")
+
+        requested = max(1, int(count or self.settings.replicate.candidate_count or 10))
+        cached = self._maybe_reuse_candidate_batch(target_dir, requested=requested)
+        if cached is not None:
+            return cached
+        batch_id, batch_dir = self._create_batch_dir(target_dir)
+        source_visual_asset, visual_prompt_parts = self._prepare_visual_source_for_batch(
+            visual_source=visual_source,
+            batch_dir=batch_dir,
+        )
+        prompts = self._openai_generate_prompts_from_visual(
+            visual_prompt_parts=visual_prompt_parts,
+            count=requested,
+        )
+        return self._write_candidate_batch(
+            batch_id=batch_id,
+            batch_dir=batch_dir,
+            prompts=prompts,
+            source_visual_asset=source_visual_asset,
+        )
 
     def generate_visual_stack(self, target_dir: Path) -> tuple[str, Path, Path]:
         seeds = self._load_prompt_seeds(self.settings.replicate.prompt_seed_path)
@@ -87,6 +104,73 @@ class ReplicateWorkflowService:
         if style == "mercy_legacy":
             return self._openai_generate_prompts_mercy(examples, count)
         return self._openai_generate_prompts_shepherd(examples, count)
+
+    def _openai_generate_prompts_from_visual(
+        self,
+        visual_prompt_parts: list[dict],
+        count: int,
+    ) -> list[str]:
+        prompt_settings = self.settings.replicate.visual_prompt_generation
+        system_prompt = (prompt_settings.system_prompt or "").strip()
+        if not system_prompt:
+            raise RuntimeError("The profile is missing replicate.visual_prompt_generation.system_prompt.")
+
+        def _normalize_prompt(text: str) -> str:
+            return re.sub(r"\s+", " ", text).strip().casefold()
+
+        def _one_prompt(ordinal: int) -> str:
+            response = self.openai_provider.client().responses.create(
+                model=self.settings.openai.model,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": self._visual_prompt_user_text(ordinal, count)},
+                            *visual_prompt_parts,
+                        ],
+                    },
+                ],
+            )
+            prompt = self._extract_visual_prompt(response.output_text or "")
+            if not prompt:
+                raise RuntimeError(f"OpenAI did not return a usable visual prompt (item {ordinal}/{count}).")
+            return prompt
+
+        max_workers = max(1, min(count, 4))
+        slots: list[str | None] = [None] * count
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {executor.submit(_one_prompt, index + 1): index for index in range(count)}
+            for future in concurrent.futures.as_completed(future_to_index):
+                slots[future_to_index[future]] = future.result()
+
+        prompts: list[str] = []
+        seen: set[str] = set()
+        for item in slots:
+            if not item:
+                continue
+            normalized = _normalize_prompt(item)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            prompts.append(item)
+
+        extra_ordinal = count + 1
+        extra_attempts = 0
+        max_extra_attempts = max(4, count * 3)
+        while len(prompts) < count and extra_attempts < max_extra_attempts:
+            extra_attempts += 1
+            item = _one_prompt(extra_ordinal)
+            extra_ordinal += 1
+            normalized = _normalize_prompt(item)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            prompts.append(item)
+
+        if prompts:
+            return prompts[:count]
+        raise RuntimeError("OpenAI did not return usable visual prompts.")
 
     def _openai_generate_prompts_shepherd(self, examples: list[str], count: int) -> list[str]:
         def _normalize_prompt(text: str) -> str:
@@ -213,6 +297,189 @@ class ReplicateWorkflowService:
             pass
         lines = [line.strip("-* \t") for line in raw.splitlines() if line.strip()]
         return lines[:count]
+
+    def _create_batch_dir(self, target_dir: Path) -> tuple[str, Path]:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        batch_id = f"{self.settings.profile.id}-candidates-{stamp}"
+        batch_dir = target_dir / batch_id
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        return batch_id, batch_dir
+
+    def _write_candidate_batch(
+        self,
+        *,
+        batch_id: str,
+        batch_dir: Path,
+        prompts: list[str],
+        source_visual_asset: VisualAsset | None,
+    ) -> ReplicateImageBatch:
+        image_ext = (self.settings.replicate.image_output_format or "png").lower().lstrip(".")
+        candidates: list[ReplicateImageCandidate] = []
+        for index, prompt in enumerate(prompts, start=1):
+            image_path = batch_dir / f"candidate_{index:02d}.{image_ext}"
+            image_path.write_bytes(self.replicate_provider.generate_image_bytes(prompt))
+            candidates.append(
+                ReplicateImageCandidate(
+                    candidate_id=f"candidate-{index:02d}",
+                    prompt=prompt,
+                    image_path=image_path,
+                    label=f"Candidate {index:02d}",
+                )
+            )
+
+        batch = ReplicateImageBatch(
+            batch_id=batch_id,
+            profile_id=self.settings.profile.id,
+            batch_dir=batch_dir,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            candidates=candidates,
+            source_visual_asset=source_visual_asset,
+        )
+        (batch.batch_dir / "batch.json").write_text(json.dumps(batch.to_dict(), indent=2), encoding="utf-8")
+        return batch
+
+    def _prepare_visual_source_for_batch(
+        self,
+        *,
+        visual_source: Path,
+        batch_dir: Path,
+    ) -> tuple[VisualAsset, list[dict]]:
+        source_path = visual_source.expanduser().resolve()
+        if not source_path.exists():
+            raise FileNotFoundError(f"Visual source not found: {source_path}")
+
+        suffix = source_path.suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+            kind = "image"
+        elif suffix in {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mpeg", ".mpg"}:
+            kind = "video"
+        else:
+            raise ValueError(f"Unsupported visual file: {source_path.name}")
+
+        copied_path = batch_dir / f"source_visual{suffix}"
+        shutil.copy2(source_path, copied_path)
+        source_visual_asset = VisualAsset(
+            kind=kind,
+            path=copied_path,
+            original_name=source_path.name,
+        )
+
+        if kind == "image":
+            parts = [{"type": "input_image", "image_url": img_to_data_url(copied_path)}]
+            return source_visual_asset, parts
+
+        preview_path = extract_video_frame(copied_path, batch_dir / "source_visual_preview.jpg")
+        if preview_path:
+            parts = [
+                {
+                    "type": "input_text",
+                    "text": (
+                        f"The source visual is a video clip named {source_path.name}. "
+                        "Use the extracted preview frame to infer the intended scene accurately."
+                    ),
+                },
+                {"type": "input_image", "image_url": img_to_data_url(preview_path)},
+            ]
+            return source_visual_asset, parts
+
+        return source_visual_asset, [
+            {
+                "type": "input_text",
+                "text": (
+                    f"The source visual is a video clip named {source_path.name}. "
+                    "No preview frame is available, so infer the scene from the clip context and filename only."
+                ),
+            }
+        ]
+
+    def _visual_prompt_user_text(self, ordinal: int, total: int) -> str:
+        prompt_settings = self.settings.replicate.visual_prompt_generation
+        lines = []
+        user_prompt = (prompt_settings.user_prompt or "").strip()
+        if user_prompt:
+            lines.append(user_prompt)
+        variation_prompt = (prompt_settings.variation_prompt or "").strip()
+        if variation_prompt:
+            lines.append(variation_prompt.format(ordinal=ordinal, total=total))
+        return "\n\n".join(lines).strip()
+
+    def _extract_visual_prompt(self, raw: str) -> str:
+        text = (raw or "").strip()
+        if not text:
+            return ""
+        if text.startswith("```"):
+            text = text.strip("`").strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                if isinstance(payload.get("prompt"), str):
+                    return payload["prompt"].strip()
+                prompts = payload.get("prompts")
+                if isinstance(prompts, list):
+                    cleaned = dedupe_preserve_order(
+                        [str(item).strip() for item in prompts if str(item).strip()]
+                    )
+                    if cleaned:
+                        return cleaned[0]
+            if isinstance(payload, list):
+                cleaned = dedupe_preserve_order(
+                    [str(item).strip() for item in payload if str(item).strip()]
+                )
+                if cleaned:
+                    return cleaned[0]
+        except Exception:
+            pass
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        cleaned_lines = [line.strip("-* \t") for line in lines]
+        return " ".join(cleaned_lines).strip()
+
+    def _maybe_reuse_candidate_batch(
+        self,
+        target_dir: Path,
+        *,
+        requested: int,
+    ) -> ReplicateImageBatch | None:
+        debug_settings = self.settings.replicate.debug
+        if not debug_settings.enabled or not debug_settings.reuse_candidate_batch:
+            return None
+
+        batch = self._load_debug_candidate_batch(target_dir)
+        if batch is None:
+            raise RuntimeError("Replicate debug reuse is enabled, but no reusable candidate batch was found.")
+        if len(batch.candidates) < requested:
+            raise RuntimeError(
+                f"Replicate debug batch {batch.batch_id} has only {len(batch.candidates)} candidates, expected at least {requested}."
+            )
+        return batch
+
+    def _load_debug_candidate_batch(self, target_dir: Path) -> ReplicateImageBatch | None:
+        debug_settings = self.settings.replicate.debug
+        explicit_batch_id = (debug_settings.candidate_batch_id or "").strip()
+        if explicit_batch_id:
+            batch_path = target_dir / explicit_batch_id / "batch.json"
+            if not batch_path.exists():
+                raise FileNotFoundError(f"Replicate debug batch not found: {explicit_batch_id}")
+            return self._read_candidate_batch(batch_path)
+
+        strategy = (debug_settings.candidate_batch_strategy or "explicit_or_latest").strip().lower()
+        if strategy not in {"explicit_or_latest", "latest"}:
+            raise RuntimeError(f"Unsupported replicate debug candidate batch strategy: {debug_settings.candidate_batch_strategy}")
+
+        batch_paths = sorted(
+            target_dir.glob(f"{self.settings.profile.id}-candidates-*/batch.json"),
+            key=lambda path: path.parent.name,
+        )
+        if not batch_paths:
+            return None
+        return self._read_candidate_batch(batch_paths[-1])
+
+    @staticmethod
+    def _read_candidate_batch(batch_path: Path) -> ReplicateImageBatch:
+        payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        return ReplicateImageBatch.from_dict(payload)
 
 
 ShepherdReplicateService = ReplicateWorkflowService

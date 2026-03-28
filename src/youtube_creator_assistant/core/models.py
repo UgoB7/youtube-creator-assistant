@@ -73,12 +73,14 @@ class ReplicateImageCandidate:
     candidate_id: str
     prompt: str
     image_path: Path
+    label: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "candidate_id": self.candidate_id,
             "prompt": self.prompt,
             "image_path": str(self.image_path),
+            "label": self.label,
         }
 
     @classmethod
@@ -87,6 +89,7 @@ class ReplicateImageCandidate:
             candidate_id=str(data["candidate_id"]),
             prompt=str(data["prompt"]),
             image_path=Path(str(data["image_path"])),
+            label=str(data["label"]) if data.get("label") else None,
         )
 
 
@@ -97,6 +100,7 @@ class ReplicateImageBatch:
     batch_dir: Path
     created_at: str
     candidates: List[ReplicateImageCandidate] = field(default_factory=list)
+    source_visual_asset: Optional[VisualAsset] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -105,6 +109,7 @@ class ReplicateImageBatch:
             "batch_dir": str(self.batch_dir),
             "created_at": self.created_at,
             "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "source_visual_asset": self.source_visual_asset.to_dict() if self.source_visual_asset else None,
         }
 
     @classmethod
@@ -115,6 +120,7 @@ class ReplicateImageBatch:
             batch_dir=Path(str(data["batch_dir"])),
             created_at=str(data["created_at"]),
             candidates=[ReplicateImageCandidate.from_dict(item) for item in data.get("candidates", [])],
+            source_visual_asset=VisualAsset.from_dict(data["source_visual_asset"]) if data.get("source_visual_asset") else None,
         )
 
 

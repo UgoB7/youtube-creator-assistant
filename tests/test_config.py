@@ -48,6 +48,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.replicate.image_payload_style, "flux")
         self.assertEqual(settings.render.append_mode, "sequential_exact")
 
+    def test_load_lofi_visual_prompt_generation_config(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/lofi.yaml")
+        self.assertEqual(settings.profile.id, "lofi")
+        self.assertEqual(settings.profile.visual_input_mode, "image_or_video")
+        self.assertTrue(settings.replicate.enabled)
+        self.assertTrue(settings.replicate.allow_candidate_generation)
+        self.assertTrue(settings.replicate.visual_prompt_generation.enabled)
+        self.assertIn("LoFi Jesus", settings.replicate.visual_prompt_generation.system_prompt)
+        self.assertEqual(settings.replicate.prompt_seed_path.name, "prompts.txt")
+        self.assertEqual(settings.replicate.video_prompt, "Camera locked. ONLY animate the candle flames.")
+        self.assertTrue(settings.replicate.debug.enabled)
+        self.assertTrue(settings.replicate.debug.reuse_candidate_batch)
+        self.assertEqual(settings.replicate.debug.candidate_batch_id, "lofi-candidates-20260328-061400")
+
     def test_load_enchanted_melodies_config(self):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")

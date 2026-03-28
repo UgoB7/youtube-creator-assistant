@@ -1,9 +1,15 @@
+import base64
 import json
 import unittest
 from pathlib import Path
 
 from youtube_creator_assistant.core.config import load_settings
 from youtube_creator_assistant.features.replicate.service import ShepherdReplicateService
+
+
+_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlH0x8AAAAASUVORK5CYII="
+)
 
 
 class _FakeResponse:
@@ -41,6 +47,11 @@ class _FakeReplicateProvider:
     def generate_image_bytes(self, prompt: str) -> bytes:
         self.prompts.append(prompt)
         return prompt.encode("utf-8")
+
+
+class _FailingReplicateProvider:
+    def generate_image_bytes(self, _prompt: str) -> bytes:
+        raise AssertionError("Replicate should not be called when debug batch reuse is enabled.")
 
 
 class ShepherdReplicateServiceTests(unittest.TestCase):
@@ -85,6 +96,75 @@ class ShepherdReplicateServiceTests(unittest.TestCase):
 
         self.assertEqual(len(batch.candidates), 3)
         self.assertEqual(provider.client()._index, 1)
+
+    def test_generate_candidate_batch_from_visual_uses_visual_prompt_generation(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.visual_prompt_generation.enabled = True
+        settings.replicate.visual_prompt_generation.system_prompt = "Return one prompt only."
+        settings.replicate.visual_prompt_generation.user_prompt = "Analyze the image."
+        settings.replicate.visual_prompt_generation.variation_prompt = "Candidate {ordinal}/{total}."
+
+        outputs = ["Visual Prompt 1", "Visual Prompt 2"]
+        replicate_provider = _FakeReplicateProvider()
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=_FakeOpenAIProvider(outputs),
+            replicate_provider=replicate_provider,
+        )
+
+        temp_root = root / "runtime" / "test-visual-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        image_path = temp_root / "source.png"
+        image_path.write_bytes(_PNG_BYTES)
+        batch = service.generate_candidate_batch_from_visual(temp_root, image_path, count=2)
+
+        self.assertEqual(len(batch.candidates), 2)
+        self.assertEqual(replicate_provider.prompts, ["Visual Prompt 1", "Visual Prompt 2"])
+        self.assertIsNotNone(batch.source_visual_asset)
+        assert batch.source_visual_asset is not None
+        self.assertEqual(batch.source_visual_asset.kind, "image")
+        self.assertTrue(batch.source_visual_asset.path.exists())
+
+    def test_debug_reuses_explicit_candidate_batch_without_regeneration(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.candidate_count = 2
+        settings.replicate.debug.enabled = True
+        settings.replicate.debug.reuse_candidate_batch = True
+
+        temp_root = root / "runtime" / "test-debug-reuse-candidates"
+        batch_dir = temp_root / "shepherd-candidates-20990101-000000"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        candidate_a = batch_dir / "candidate_01.png"
+        candidate_b = batch_dir / "candidate_02.png"
+        candidate_a.write_bytes(b"a")
+        candidate_b.write_bytes(b"b")
+        payload = {
+            "batch_id": "shepherd-candidates-20990101-000000",
+            "profile_id": "shepherd",
+            "batch_dir": str(batch_dir),
+            "created_at": "2099-01-01T00:00:00+00:00",
+            "candidates": [
+                {"candidate_id": "candidate-01", "prompt": "Prompt A", "image_path": str(candidate_a), "label": "Candidate 01"},
+                {"candidate_id": "candidate-02", "prompt": "Prompt B", "image_path": str(candidate_b), "label": "Candidate 02"},
+            ],
+            "source_visual_asset": None,
+        }
+        (batch_dir / "batch.json").write_text(json.dumps(payload), encoding="utf-8")
+        settings.replicate.debug.candidate_batch_id = "shepherd-candidates-20990101-000000"
+
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=_FakeOpenAIProvider(["should not be used"]),
+            replicate_provider=_FailingReplicateProvider(),
+        )
+
+        batch = service.generate_candidate_batch(temp_root, count=2)
+
+        self.assertEqual(batch.batch_id, "shepherd-candidates-20990101-000000")
+        self.assertEqual(len(batch.candidates), 2)
+        self.assertEqual(batch.candidates[0].prompt, "Prompt A")
 
 
 if __name__ == "__main__":

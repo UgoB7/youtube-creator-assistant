@@ -1,7 +1,7 @@
 profile:
   id: lofi
-  display_name: Video Workflow
-  visual_input_mode: video
+  display_name: LoFi Legacy Workflow
+  visual_input_mode: image_or_video
 
 paths:
   runtime_root: ../../runtime/lofi
@@ -27,15 +27,106 @@ thumbnail:
 
 openai:
   model: gpt-5.2-2025-12-11
-  title_examples_input: ""
-  devotional_examples_input: ""
+  title_examples_input: |
+    LoFi Jesus Prayer Mix / Night Prayer LoFi / Scripture Sleep Mix / Morning Worship Beats / Crosslight Focus / Quiet Prayer Beats / Peace in Christ LoFi / Midnight Scripture Study
+  devotional_examples_input: |
+    Peace in Christ / Quiet prayer tonight / Rest in the Word / Calm study with Jesus / Gentle Christian lofi for focus / Night prayer and peace
+  title_generation:
+    count: 10
+    min_count: 10
+    use_visual_input: true
+    require_separator: false
+    prompt_addendum: |
+      Match the atmosphere of a calm Christian lofi channel.
+      Favor short, memorable YouTube titles that feel peaceful, prayerful, and study-friendly.
+      Blend rest, prayer, focus, worship, Scripture, night, and peace when relevant to the current visual.
+    rules:
+      - keep them relevant to the current image
+      - calm Christian lofi tone
+      - no emojis, no hashtags, no all caps
+      - keep them natural and concise for YouTube
+  theme_generation:
+    count: 5
+    min_count: 5
+    use_visual_input: true
+    include_audio_context: false
+    prompt_addendum: |
+      Generate short themes for a Christian lofi YouTube upload from the chosen title and visual.
+      Keep them peaceful, prayerful, focused, and evocative.
+    rules:
+      - 2 to 4 words each
+      - aligned with the chosen title
+      - aligned with the image
+      - calm Christian lofi mood
 
 description:
   variant: vibespro_legacy
   audio_explanation_count: 5
 
 replicate:
-  enabled: false
+  enabled: true
+  allow_candidate_generation: true
+  candidate_count: 20
+  prompt_style: mercy_legacy
+  prompt_seed_path: ../../../yt/LoFi_mac/prompts.txt
+  image_model: bytedance/seedream-4
+  image_payload_style: seedream
+  image_output_format: png
+  image_size: 2K
+  image_width: 2048
+  image_height: 2048
+  image_max_images: 1
+  image_aspect_ratio: "16:9"
+  image_enhance_prompt: false
+  image_sequential_generation: disabled
+  video_model: bytedance/seedance-1.5-pro
+  video_fps: 24
+  video_duration: 12
+  video_resolution: 1080p
+  video_aspect_ratio: "16:9"
+  video_camera_fixed: true
+  video_generate_audio: false
+  video_prompt: "Camera locked. ONLY animate the candle flames."
+  visual_prompt_generation:
+    enabled: true
+    system_prompt: |
+      You are a prompt engineer for image generation. Analyze the attached image and write ONE single English prompt that would let an image model recreate the same scene as closely as possible.
+
+      Hard rules:
+      - Keep the exact same composition.
+      - Do NOT add new objects. Do NOT remove any objects. Do NOT change the setting or time of day.
+      - The ONLY allowed change is the main character: replace the original person with Jesus Christ, clearly recognizable.
+      - Include ALL visible details from the reference image: every object, decor element, environment detail, text/UI element, clothing detail, material or texture, and color relation.
+      - Do not omit small background details.
+
+      Jesus requirements:
+      - Shoulder-length wavy brown hair, well-defined beard and moustache, calm serene expression.
+      - Traditional Jesus outfit: simple ivory or off-white robe or tunic with soft folds, plus a deep muted red or crimson mantle or shawl draped over one shoulder and across the torso.
+      - Keep the large over-ear headphones on Jesus if they are present in the original scene.
+      - Keep the same pose and action as the original character.
+
+      Additional required changes:
+      - On the circular earcup area of the headphones, add the exact text "LoFi Jesus" in small, discreet lettering when headphones are visible.
+      - Add subtle Christian candles and one visible cross mounted on a wall in the decor when that can be done naturally and coherently with the scene lighting.
+
+      Additional style requirements:
+      - The image should follow a 90s Japanese anime aesthetic, heavily inspired by cozy and detailed Studio Ghibli-like backgrounds.
+      - The lineart should be soft and colored.
+      - The rendering should use flat cel-shading combined with soft digital gradients to define volume and depth.
+
+      Output format:
+      - Return only the final polished generation prompt as a single paragraph in English.
+      - Do not include any other commentary.
+    user_prompt: |
+      Analyze this image and return only the final single-paragraph generation prompt.
+    variation_prompt: |
+      Generate candidate {ordinal} of {total}.
+      Keep the core composition and constraints identical, but make this version a distinct faithful variation with subtle differences in secondary details, atmosphere, or stylization.
+  debug:
+    enabled: true
+    reuse_candidate_batch: true
+    candidate_batch_id: lofi-candidates-20260328-061400
+    candidate_batch_strategy: explicit_or_latest
 
 web:
   host: 127.0.0.1
@@ -51,7 +142,7 @@ render:
   clean_media_pool_imports: true
   media_pool_folder_name: YCA Imports
   import_only_required_media: true
-  video_mode: video
+  video_mode: image_or_video
   audio_strategy: cut_to_duration
   video_strategy: loop_to_duration
   video_timing_source: metadata_first
