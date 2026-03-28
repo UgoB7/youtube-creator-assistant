@@ -58,7 +58,7 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.replicate.visual_prompt_generation.enabled)
         self.assertIn("LoFi Jesus", settings.replicate.visual_prompt_generation.system_prompt)
         self.assertNotIn("Additional style requirements:", settings.replicate.visual_prompt_generation.system_prompt)
-        self.assertEqual(settings.replicate.prompt_seed_path.name, "prompts.txt")
+        self.assertEqual(settings.replicate.prompt_seed_path.name, "lofi_prompts.local.txt")
         self.assertEqual(settings.replicate.prompt_batch_size, 5)
         self.assertEqual(settings.replicate.prompt_parallel_requests, 4)
         self.assertIn("Additional style requirements:", settings.replicate.image_prompt_prefix)

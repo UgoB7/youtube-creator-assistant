@@ -14,6 +14,17 @@ def _expand_path(value: str | Path, base_dir: Path) -> Path:
     return (base_dir / raw).resolve()
 
 
+def _resolve_includes(value: Any, base_dir: Path) -> Any:
+    if isinstance(value, dict):
+        if set(value.keys()) == {"$include_text"}:
+            include_path = _expand_path(str(value["$include_text"]), base_dir)
+            return include_path.read_text(encoding="utf-8")
+        return {key: _resolve_includes(item, base_dir) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_includes(item, base_dir) for item in value]
+    return value
+
+
 @dataclass
 class ProfileSettings:
     id: str
@@ -346,6 +357,7 @@ def load_settings(config_path: str | Path) -> Settings:
     path = Path(config_path).expanduser().resolve()
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     base_dir = path.parent
+    data = _resolve_includes(data, base_dir)
 
     profile_data: Dict[str, Any] = data.get("profile", {})
     paths_data: Dict[str, Any] = data.get("paths", {})

@@ -10,6 +10,11 @@ dist/
 build/
 *.egg-info/
 runtime/
-assets/audio/gospel/
-assets/audio/psalms/
-assets/audio/enchanted_melodies/
+assets/**
+!assets/
+!assets/**/
+!assets/**/.gitkeep
+configs/local/**
+!configs/local/
+!configs/local/**/
+!configs/local/**/.gitkeep
