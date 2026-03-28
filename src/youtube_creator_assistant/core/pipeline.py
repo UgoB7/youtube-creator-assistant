@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -74,7 +75,6 @@ class ContentPipeline:
             raise ValueError("Render video regeneration requires an image-based project.")
 
         source_path = project.visual_asset.path.expanduser().resolve()
-        video_bytes = self.replicate_provider.generate_video_bytes(source_path)
         input_dir = project.project_dir / "input"
         input_dir.mkdir(parents=True, exist_ok=True)
         render_path = (
@@ -82,7 +82,7 @@ class ContentPipeline:
             if project.render_visual_asset is not None
             else input_dir / "render_visual.mp4"
         )
-        render_path.write_bytes(video_bytes)
+        self._write_render_video(source_path, render_path)
 
         project.render_visual_asset = project.render_visual_asset or project.visual_asset.__class__(
             kind="video",
@@ -111,8 +111,30 @@ class ContentPipeline:
         generated_dir = self.settings.paths.incoming_dir / "replicate_generated"
         generated_dir.mkdir(parents=True, exist_ok=True)
         video_path = generated_dir / f"{source_path.stem}_render.mp4"
-        video_path.write_bytes(self.replicate_provider.generate_video_bytes(source_path))
+        self._write_render_video(source_path, video_path)
         return video_path
+
+    def _write_render_video(self, source_path: Path, destination_path: Path) -> Path:
+        debug_video_path = self._resolve_debug_render_video_path()
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        if debug_video_path is not None:
+            shutil.copy2(debug_video_path, destination_path)
+            return destination_path
+        destination_path.write_bytes(self.replicate_provider.generate_video_bytes(source_path))
+        return destination_path
+
+    def _resolve_debug_render_video_path(self) -> Path | None:
+        debug_settings = self.settings.replicate.debug
+        if not debug_settings.enabled or not debug_settings.reuse_render_video:
+            return None
+        if debug_settings.render_video_path is None:
+            raise RuntimeError(
+                "Replicate debug render video reuse is enabled, but no render_video_path is configured."
+            )
+        render_video_path = debug_settings.render_video_path.expanduser().resolve()
+        if not render_video_path.exists():
+            raise FileNotFoundError(f"Replicate debug render video not found: {render_video_path}")
+        return render_video_path
 
     def create_candidate_batch(self, count: int | None = None) -> ReplicateImageBatch:
         if not self.settings.replicate.enabled:
@@ -152,7 +174,7 @@ class ContentPipeline:
             raise ValueError(f"Candidate {candidate_id} was not found in batch {batch_id}.")
 
         video_path = batch.batch_dir / f"{candidate.candidate_id}_render.mp4"
-        video_path.write_bytes(self.replicate_provider.generate_video_bytes(candidate.image_path))
+        self._write_render_video(candidate.image_path, video_path)
 
         project = self.runtime.create_project_from_assets(
             candidate.image_path,

@@ -58,10 +58,12 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.replicate.visual_prompt_generation.enabled)
         self.assertIn("LoFi Jesus", settings.replicate.visual_prompt_generation.system_prompt)
         self.assertEqual(settings.replicate.prompt_seed_path.name, "prompts.txt")
-        self.assertEqual(settings.replicate.video_prompt, "Camera locked. ONLY animate the candle flames.")
+        self.assertEqual(settings.replicate.video_prompt, "Camera locked.")
         self.assertTrue(settings.replicate.debug.enabled)
         self.assertTrue(settings.replicate.debug.reuse_candidate_batch)
         self.assertEqual(settings.replicate.debug.candidate_batch_id, "lofi-candidates-20260328-061400")
+        self.assertTrue(settings.replicate.debug.reuse_render_video)
+        self.assertEqual(settings.replicate.debug.render_video_path.name, "candidate-04_render.mp4")
 
     def test_load_enchanted_melodies_config(self):
         root = Path(__file__).resolve().parents[1]

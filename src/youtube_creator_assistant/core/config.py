@@ -221,15 +221,25 @@ class ReplicateDebugSettings:
     reuse_candidate_batch: bool = False
     candidate_batch_id: str = ""
     candidate_batch_strategy: str = "explicit_or_latest"
+    reuse_render_video: bool = False
+    render_video_path: Optional[Path] = None
 
     @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ReplicateDebugSettings":
+    def from_dict(
+        cls,
+        data: Optional[Dict[str, Any]],
+        *,
+        base_dir: Path,
+    ) -> "ReplicateDebugSettings":
         payload = data or {}
+        render_video_path = payload.get("render_video_path")
         return cls(
             enabled=bool(payload.get("enabled", False)),
             reuse_candidate_batch=bool(payload.get("reuse_candidate_batch", False)),
             candidate_batch_id=str(payload.get("candidate_batch_id", "")),
             candidate_batch_strategy=str(payload.get("candidate_batch_strategy", "explicit_or_latest")),
+            reuse_render_video=bool(payload.get("reuse_render_video", False)),
+            render_video_path=_expand_path(render_video_path, base_dir) if render_video_path else None,
         )
 
 
@@ -278,7 +288,7 @@ class ReplicateSettings:
         visual_prompt_generation = VisualPromptGenerationSettings.from_dict(
             payload.pop("visual_prompt_generation", None)
         )
-        debug = ReplicateDebugSettings.from_dict(payload.pop("debug", None))
+        debug = ReplicateDebugSettings.from_dict(payload.pop("debug", None), base_dir=base_dir)
         return cls(
             **payload,
             visual_prompt_generation=visual_prompt_generation,

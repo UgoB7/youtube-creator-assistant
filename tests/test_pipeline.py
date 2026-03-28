@@ -24,6 +24,11 @@ class _FakeReplicateProvider:
         return self.payload
 
 
+class _FailingReplicateProvider:
+    def generate_video_bytes(self, _image_path: Path) -> bytes:
+        raise AssertionError("Replicate video generation should not be called when debug render reuse is enabled.")
+
+
 class ContentPipelineTests(unittest.TestCase):
     def test_enchanted_selected_titles_are_limited_by_yaml(self):
         root = Path(__file__).resolve().parents[1]
@@ -233,6 +238,97 @@ class ContentPipelineTests(unittest.TestCase):
             assert regenerated.render_visual_asset is not None
             self.assertEqual(regenerated.render_visual_asset.kind, "video")
             self.assertEqual(regenerated.render_visual_asset.path.read_bytes(), b"vibes-video")
+
+    def test_create_project_reuses_debug_render_video_without_calling_replicate(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.debug.enabled = True
+        settings.replicate.debug.reuse_render_video = True
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "psalms"
+            settings.paths.gospel_dir = temp_dir / "assets" / "gospel"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            uploaded_image = temp_dir / "uploaded.png"
+            uploaded_image.write_bytes(_PNG_BYTES)
+            debug_video = temp_dir / "debug_render.mp4"
+            debug_video.write_bytes(b"debug-video")
+            settings.replicate.debug.render_video_path = debug_video
+
+            pipeline = ContentPipeline(settings)
+            pipeline.replicate_provider = _FailingReplicateProvider()
+
+            project = pipeline.create_project(uploaded_image)
+
+            self.assertIsNotNone(project.render_visual_asset)
+            assert project.render_visual_asset is not None
+            self.assertEqual(project.render_visual_asset.path.read_bytes(), b"debug-video")
+
+    def test_create_project_from_candidate_reuses_debug_render_video_without_calling_replicate(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.replicate.debug.enabled = True
+        settings.replicate.debug.reuse_render_video = True
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "psalms"
+            settings.paths.gospel_dir = temp_dir / "assets" / "gospel"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            batch_dir = settings.paths.incoming_dir / "replicate_generated" / "shepherd-candidates-20990101-000000"
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            candidate_image = batch_dir / "candidate_01.png"
+            candidate_image.write_bytes(_PNG_BYTES)
+            (batch_dir / "batch.json").write_text(
+                (
+                    "{\n"
+                    '  "batch_id": "shepherd-candidates-20990101-000000",\n'
+                    '  "profile_id": "shepherd",\n'
+                    f'  "batch_dir": "{batch_dir}",\n'
+                    '  "created_at": "2099-01-01T00:00:00+00:00",\n'
+                    '  "candidates": [\n'
+                    "    {\n"
+                    '      "candidate_id": "candidate-01",\n'
+                    '      "prompt": "Prompt A",\n'
+                    f'      "image_path": "{candidate_image}",\n'
+                    '      "label": "Candidate 01"\n'
+                    "    }\n"
+                    "  ],\n"
+                    '  "source_visual_asset": null\n'
+                    "}\n"
+                ),
+                encoding="utf-8",
+            )
+            debug_video = temp_dir / "candidate_debug_render.mp4"
+            debug_video.write_bytes(b"debug-candidate-video")
+            settings.replicate.debug.render_video_path = debug_video
+
+            pipeline = ContentPipeline(settings)
+            pipeline.replicate_provider = _FailingReplicateProvider()
+
+            project = pipeline.create_project_from_candidate(
+                "shepherd-candidates-20990101-000000",
+                "candidate-01",
+            )
+
+            self.assertIsNotNone(project.render_visual_asset)
+            assert project.render_visual_asset is not None
+            self.assertEqual(project.render_visual_asset.path.read_bytes(), b"debug-candidate-video")
 
 
 if __name__ == "__main__":

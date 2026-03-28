@@ -86,7 +86,7 @@ replicate:
   video_aspect_ratio: "16:9"
   video_camera_fixed: true
   video_generate_audio: false
-  video_prompt: "Camera locked. ONLY animate the candle flames."
+  video_prompt: "Camera locked."
   visual_prompt_generation:
     enabled: true
     system_prompt: |
@@ -127,6 +127,8 @@ replicate:
     reuse_candidate_batch: true
     candidate_batch_id: lofi-candidates-20260328-061400
     candidate_batch_strategy: explicit_or_latest
+    reuse_render_video: true
+    render_video_path: ../../runtime/lofi/incoming/replicate_generated/lofi-candidates-20260328-061400/candidate-04_render.mp4
 
 web:
   host: 127.0.0.1
