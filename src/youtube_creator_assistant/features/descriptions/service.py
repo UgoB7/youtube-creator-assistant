@@ -291,6 +291,12 @@ class DescriptionService:
         self.provider = provider or OpenAIProvider()
 
     def build_description(self, project: VideoProject) -> str:
+        if self.settings.description.variant == "enchanted_melodies_template":
+            text = self._build_enchanted_melodies_description(project)
+            (project.project_dir / "yt_video_description.txt").write_text(text, encoding="utf-8")
+            project.description_text = text
+            return text
+
         preset = self._preset()
         chapters = [self._normalize_english_scripture_names(f"{entry.timestamp} - {entry.label}") for entry in project.chapters]
         audio_count = max(0, int(self.settings.description.audio_explanation_count or 0))
@@ -347,6 +353,132 @@ class DescriptionService:
         (project.project_dir / "yt_video_description.txt").write_text(text, encoding="utf-8")
         project.description_text = text
         return text
+
+    def _build_enchanted_melodies_description(self, project: VideoProject) -> str:
+        unique_paragraph = self._build_enchanted_melodies_unique_paragraph(
+            visual_asset=project.visual_asset,
+            working_dir=project.project_dir,
+            chosen_title=project.selected_title or "",
+            validated_themes=project.themes,
+            audio_tracks=[track.label for track in project.audio_tracks[:5]],
+        )
+        lines = [
+            "💚 Welcome to Enchanted Melodies",
+            "",
+            "🎶  NO AI musics 🎶 ",
+            "",
+            unique_paragraph,
+            "",
+            "🌿Genres:",
+            "Fantasy Music, Celtic Music, Medieval Music, Dark Fantasy Music, Relaxing Music, Spiritual Music, Sleep Music, Relaxation.",
+            "",
+            "Perfect for:",
+            "🎮 D&D sessions & fantasy RPGs",
+            "📚 Reading, writing & worldbuilding",
+            "🧘‍♂️ Relaxation, meditation & sleep",
+            "💻 Deep focus and study",
+            "",
+            "Every composition is crafted to transport you — blending medieval instruments like harp, lute, and soft percussion with ambient soundscapes from a timeless world. Ideal for creators, wanderers, and dreamers alike.",
+            "",
+            "✨ Subscribe to join our growing community of travelers, scribes, and adventurers.",
+            "",
+            "🎶 Music by Enchanted Melodies",
+            "🎥 Visuals by Enchanted Melodies",
+            "",
+            "🎼 Tags:",
+            "fantasy music, celtic music, medieval music, relaxation, study, sleep, medieval harp and lute music, light fantasy, bright fantasy, ambient fantasy, dnd music, rpg music, music for writing, music for studying, music for sleep, harp music, ancient music, fantasy world music, fantasy ambient, bardcore",
+            "",
+            "📀 Hashtags:",
+            "#celtic #fantasy #medieval #celticmusic #fantasymusic #medievalmusic #relaxation #sleep #study #ambientsoundtrack #dndmusic #fantasymusic #backgroundmusic #sleepmusic #harp #lute #medievalmusic #fantasyost #ambientsoundtrack #dndmusic #relaxingmusic #studymusic #sleepmusic #writingmusic #ancientworlds #medievalmusic",
+        ]
+        return "\n".join(lines).strip()
+
+    def _build_enchanted_melodies_unique_paragraph(
+        self,
+        visual_asset: VisualAsset,
+        working_dir: Path,
+        chosen_title: str,
+        validated_themes: Sequence[str],
+        audio_tracks: Sequence[str],
+    ) -> str:
+        fallback = self._build_enchanted_melodies_unique_paragraph_fallback(
+            chosen_title=chosen_title,
+            validated_themes=validated_themes,
+        )
+        prompt = self._normalize_single_line(self.settings.description.dynamic_intro_prompt)
+        if not prompt:
+            return fallback
+
+        themes_text = "\n".join(f"- {theme}" for theme in self._clean_lines(validated_themes)) or "- None"
+        try:
+            content = [
+                {"type": "input_text", "text": prompt},
+                {"type": "input_text", "text": f"VIDEO TITLE: {chosen_title}"},
+                {"type": "input_text", "text": f"VALIDATED THEMES:\n{themes_text}"},
+            ]
+            if self.settings.description.dynamic_intro_include_audio_context:
+                audio_text = "\n".join(f"- {track}" for track in self._clean_lines(audio_tracks)) or "- None"
+                content.append({"type": "input_text", "text": f"SELECTED AUDIO TRACKS:\n{audio_text}"})
+            content.extend(self._visual_prompt_parts(visual_asset, working_dir))
+            response = self.provider.client().responses.create(
+                model=self.settings.openai.model,
+                input=[
+                    {
+                        "role": "user",
+                        "content": content,
+                    }
+                ],
+            )
+            payload = self._extract_json(response.output_text.strip())
+            unique_paragraph = str(payload.get("unique_paragraph", "")).strip()
+            if unique_paragraph:
+                return unique_paragraph
+        except Exception:
+            pass
+
+        return fallback
+
+    def _build_enchanted_melodies_unique_paragraph_fallback(
+        self,
+        chosen_title: str,
+        validated_themes: Sequence[str],
+    ) -> str:
+        clean_title = self._normalize_single_line(chosen_title)
+        world_name, style_name = self._split_title_world_and_style(clean_title)
+        themes = self._clean_lines(validated_themes)[:3]
+        if themes:
+            if len(themes) == 1:
+                themes_text = themes[0]
+            elif len(themes) == 2:
+                themes_text = f"{themes[0]} and {themes[1]}"
+            else:
+                themes_text = f"{themes[0]}, {themes[1]}, and {themes[2]}"
+            theme_sentence = f"The musical theme of this video leans into {themes_text}."
+        else:
+            theme_sentence = "The musical theme of this video leans into wonder, calm, and immersive fantasy travel."
+
+        if clean_title:
+            return (
+                f'Inspired by the world of {world_name}, this Enchanted Melodies creation was designed as a unique audiovisual journey. '
+                f'The atmosphere suggested by "{clean_title}" guided the musical direction toward a tone shaped by {style_name.lower()}, quiet awe, and immersive calm. '
+                f'{theme_sentence} '
+                f'For this video, the music and ambience were carefully refined to stay fully coherent with the visuals, creating an experience meant to feel both majestic and deeply restful.'
+            )
+        return (
+            "This Enchanted Melodies creation was designed as a unique audiovisual journey through its own fantasy world. "
+            f"{theme_sentence} The music and ambience were carefully shaped in coherence with the visuals so the experience feels immersive, majestic, and deeply restful."
+        )
+
+    @staticmethod
+    def _split_title_world_and_style(chosen_title: str) -> tuple[str, str]:
+        clean_title = (chosen_title or "").strip()
+        for separator in (" — ", " – ", " - ", "—", "–"):
+            if separator in clean_title:
+                left, right = clean_title.split(separator, 1)
+                style_name = left.strip() or "Fantasy Music"
+                world_name = right.strip() or clean_title
+                return world_name, style_name
+        return clean_title or "this enchanting realm", "Fantasy Music"
 
     def _build_intro_line(
         self,

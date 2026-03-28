@@ -127,6 +127,33 @@ class DescriptionServiceTests(unittest.TestCase):
         intro_prompt = provider.client().calls[0]["input"][0]["content"][0]["text"]
         self.assertIn("Must start with 'Welcome'.", intro_prompt)
 
+    def test_enchanted_variant_uses_static_template_with_unique_title_world_paragraph(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")
+        provider = _FakeOpenAIProvider(
+            [
+                '{"unique_paragraph":"This Enchanted Melodies piece is uniquely shaped around the world of The Knight’s Quiet Road to the Sunlit Citadel, where a lone armored traveler approaches a radiant city beneath an immense floating vessel. Its musical atmosphere was carefully crafted for this specific visual journey, blending focus, calm, and quiet wonder into a single immersive arc. The selected music for this video was chosen with care so every texture, cadence, and sense of ascent stays coherent with the image and the title."}'
+            ]
+        )
+        service = DescriptionService(settings, provider=provider)
+        project = self._make_project(root, "enchanted_melodies")
+        project.selected_title = "Fantasy Music for Focus & Calm — The Knight’s Quiet Road to the Sunlit Citadel"
+        project.themes = ["Wonder", "Focus", "Calm"]
+
+        text = service.build_description(project)
+
+        self.assertIn("💚 Welcome to Enchanted Melodies", text)
+        self.assertIn("🎶  NO AI musics 🎶 ", text)
+        self.assertIn("uniquely shaped around the world of The Knight’s Quiet Road to the Sunlit Citadel", text)
+        self.assertIn("The selected music for this video was chosen with care", text)
+        self.assertIn("🎼 Tags:", text)
+        self.assertIn("📀 Hashtags:", text)
+        self.assertEqual(len(provider.client().calls), 1)
+        prompt = provider.client().calls[0]["input"][0]["content"][0]["text"]
+        content = provider.client().calls[0]["input"][0]["content"]
+        self.assertIn("specific video as unique", prompt)
+        self.assertFalse(any(part.get("text", "").startswith("SELECTED AUDIO TRACKS:\n") for part in content if part["type"] == "input_text"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,7 @@ class WorkflowSettings:
     allow_repeats: bool = True
     use_title_reference_guidance: bool = True
     selection_seed_mode: str = "project_stable"
+    max_selected_titles: int = 3
     audio_extensions: List[str] = field(default_factory=lambda: [".mp3"])
 
 
@@ -52,6 +53,98 @@ class ThumbnailSettings:
     max_bytes: int = 2 * 1024 * 1024
     target_bytes: int = 1_800_000
     suffix: str = "_yt"
+    candidate_generation_enabled: bool = False
+    idea_count: int = 4
+    idea_prompt: str = ""
+    candidate_model: str = "google/nano-banana-pro"
+    candidate_resolution: str = "2K"
+    candidate_aspect_ratio: str = "16:9"
+    candidate_output_format: str = "jpg"
+    candidate_safety_filter_level: str = "block_only_high"
+    candidate_allow_fallback_model: bool = False
+
+
+@dataclass
+class TitleGenerationSettings:
+    count: int = 20
+    min_count: int = 5
+    examples_input: str = ""
+    use_visual_input: bool = True
+    require_separator: bool = False
+    separator: str = " — "
+    prompt_addendum: str = ""
+    rules: List[str] = field(
+        default_factory=lambda: [
+            "tone: prayer, surrender, peace, comfort, hope",
+            "keep them relevant to the image",
+            "no emojis, no hashtags, no all caps",
+            "use soft punctuation when natural",
+        ]
+    )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Optional[Dict[str, Any]],
+        *,
+        title_examples_input: str = "",
+        devotional_examples_input: str = "",
+    ) -> "TitleGenerationSettings":
+        payload = data or {}
+        raw_rules = payload.get("rules")
+        if isinstance(raw_rules, list):
+            rules = [str(item).strip() for item in raw_rules if str(item).strip()]
+        else:
+            rules = cls().rules
+        examples_input = str(
+            payload.get("examples_input")
+            or title_examples_input
+            or devotional_examples_input
+            or ""
+        )
+        return cls(
+            count=int(payload.get("count", 20)),
+            min_count=int(payload.get("min_count", 5)),
+            examples_input=examples_input,
+            use_visual_input=bool(payload.get("use_visual_input", True)),
+            require_separator=bool(payload.get("require_separator", False)),
+            separator=str(payload.get("separator", " — ")),
+            prompt_addendum=str(payload.get("prompt_addendum", "")),
+            rules=rules,
+        )
+
+
+@dataclass
+class ThemeGenerationSettings:
+    count: int = 5
+    min_count: int = 3
+    use_visual_input: bool = True
+    include_audio_context: bool = True
+    prompt_addendum: str = ""
+    rules: List[str] = field(
+        default_factory=lambda: [
+            "1 to 4 words each",
+            "spiritually focused",
+            "aligned with the chosen title",
+        ]
+    )
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ThemeGenerationSettings":
+        payload = data or {}
+        raw_rules = payload.get("rules")
+        if isinstance(raw_rules, list):
+            rules = [str(item).strip() for item in raw_rules if str(item).strip()]
+        else:
+            rules = cls().rules
+        return cls(
+            count=int(payload.get("count", 5)),
+            min_count=int(payload.get("min_count", 3)),
+            use_visual_input=bool(payload.get("use_visual_input", True)),
+            include_audio_context=bool(payload.get("include_audio_context", True)),
+            prompt_addendum=str(payload.get("prompt_addendum", "")),
+            rules=rules,
+        )
 
 
 @dataclass
@@ -59,12 +152,33 @@ class OpenAISettings:
     model: str = "gpt-5.2-2025-12-11"
     title_examples_input: str = ""
     devotional_examples_input: str = ""
+    title_generation: TitleGenerationSettings = field(default_factory=TitleGenerationSettings)
+    theme_generation: ThemeGenerationSettings = field(default_factory=ThemeGenerationSettings)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "OpenAISettings":
+        payload = data or {}
+        title_examples_input = str(payload.get("title_examples_input", ""))
+        devotional_examples_input = str(payload.get("devotional_examples_input", ""))
+        return cls(
+            model=str(payload.get("model", "gpt-5.2-2025-12-11")),
+            title_examples_input=title_examples_input,
+            devotional_examples_input=devotional_examples_input,
+            title_generation=TitleGenerationSettings.from_dict(
+                payload.get("title_generation"),
+                title_examples_input=title_examples_input,
+                devotional_examples_input=devotional_examples_input,
+            ),
+            theme_generation=ThemeGenerationSettings.from_dict(payload.get("theme_generation")),
+        )
 
 
 @dataclass
 class DescriptionSettings:
     variant: str = "shepherd_legacy"
     audio_explanation_count: int = 5
+    dynamic_intro_prompt: str = ""
+    dynamic_intro_include_audio_context: bool = True
 
 
 @dataclass
@@ -181,7 +295,7 @@ def load_settings(config_path: str | Path) -> Settings:
         ),
         workflow=WorkflowSettings(**workflow_data),
         thumbnail=ThumbnailSettings(**thumbnail_data),
-        openai=OpenAISettings(**openai_data),
+        openai=OpenAISettings.from_dict(openai_data),
         description=DescriptionSettings(**description_data),
         replicate=ReplicateSettings(**replicate_data),
         web=WebSettings(**web_data),

@@ -128,11 +128,22 @@ PAGE = """<!doctype html>
 
           {% if project.title_candidates %}
             <form method="post" action="{{ url_for('build_package_route', project_id=project.project_id) }}" style="margin-top: 16px;">
-              <h3>Choose up to 3 titles</h3>
+              <h3>
+                {% if settings.workflow.max_selected_titles == 1 %}
+                  Choose the best title
+                {% else %}
+                  Choose up to {{ settings.workflow.max_selected_titles }} titles
+                {% endif %}
+              </h3>
               {% for title in project.title_candidates %}
                 <div>
                   <label>
-                    <input type="checkbox" name="titles" value="{{ title }}" {% if project.selected_titles and title in project.selected_titles %}checked{% elif not project.selected_titles and loop.index <= 3 %}checked{% endif %}>
+                    <input
+                      type="{% if settings.workflow.max_selected_titles == 1 %}radio{% else %}checkbox{% endif %}"
+                      name="titles"
+                      value="{{ title }}"
+                      {% if project.selected_titles and title in project.selected_titles %}checked{% elif not project.selected_titles and loop.index <= settings.workflow.max_selected_titles %}checked{% endif %}
+                    >
                     {{ title }}
                   </label>
                 </div>
@@ -190,6 +201,41 @@ PAGE = """<!doctype html>
             <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='artifacts/' + project.yt_thumbnail_path.name) }}">thumbnail</a></li>
           {% endif %}
         </ul>
+        {% if settings.thumbnail.candidate_generation_enabled and project.selected_title %}
+          <form method="post" action="{{ url_for('generate_thumbnail_candidates_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+            <button class="secondary" type="submit">Generate thumbnail candidates</button>
+          </form>
+        {% endif %}
+        {% if selected_thumbnail_candidates %}
+          <p><strong>Selected thumbnail concepts</strong></p>
+          <ul>
+            {% for item in selected_thumbnail_candidates %}
+              <li>{{ item.label }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if thumbnail_candidates %}
+          <div style="margin-top: 18px;">
+            <p><strong>Thumbnail candidates</strong></p>
+            <p class="muted">LLM concepts plus Replicate renders based on the current image and selected title.</p>
+            <form method="post" action="{{ url_for('select_thumbnail_candidates_route', project_id=project.project_id) }}">
+              <div class="gallery">
+                {% for item in thumbnail_candidates %}
+                  <div class="candidate">
+                    <img src="{{ url_for('project_file', project_id=project.project_id, relpath='artifacts/thumbnail_candidates/' + item.image_filename) }}" alt="{{ item.label }}">
+                    <p><strong>{{ item.label }}</strong></p>
+                    <p class="muted">{{ item.summary }}</p>
+                    <label>
+                      <input type="checkbox" name="thumbnail_candidates" value="{{ item.candidate_id }}" {% if selected_thumbnail_candidates and item.candidate_id in selected_thumbnail_candidate_ids %}checked{% elif not selected_thumbnail_candidates and loop.index == 1 %}checked{% endif %}>
+                      Use for thumbnail
+                    </label>
+                  </div>
+                {% endfor %}
+              </div>
+              <button type="submit" style="margin-top: 12px;">Save selected thumbnails</button>
+            </form>
+          </div>
+        {% endif %}
         <form method="post" action="{{ url_for('send_to_resolve_route', project_id=project.project_id) }}">
           <button class="secondary" type="submit">Send to Resolve</button>
         </form>
@@ -271,17 +317,38 @@ def create_app(config_path: Path) -> Flask:
         except FileNotFoundError:
             return None
 
+    def _get_thumbnail_candidates(project):
+        if project is None:
+            return []
+        try:
+            return pipeline.thumbnail_service.load_thumbnail_candidates(project)
+        except Exception:
+            return []
+
+    def _get_selected_thumbnail_candidates(project):
+        if project is None:
+            return []
+        try:
+            return pipeline.thumbnail_service.load_selected_thumbnail_candidates(project)
+        except Exception:
+            return []
+
     @app.get("/")
     def index():
         current_id = request.args.get("project_id", "")
         batch_id = request.args.get("batch_id", "")
         project = _get_project(current_id)
+        thumbnail_candidates = _get_thumbnail_candidates(project)
+        selected_thumbnail_candidates = _get_selected_thumbnail_candidates(project)
         return render_template_string(
             PAGE,
             settings=settings,
             projects=pipeline.runtime.list_projects(),
             project=project,
             candidate_batch=_get_batch(batch_id),
+            thumbnail_candidates=thumbnail_candidates,
+            selected_thumbnail_candidates=selected_thumbnail_candidates,
+            selected_thumbnail_candidate_ids={str(item.get("candidate_id")) for item in selected_thumbnail_candidates},
             accept_attr=accept_attr,
         )
 
@@ -340,13 +407,40 @@ def create_app(config_path: Path) -> Flask:
     @app.post("/projects/<project_id>/build")
     def build_package_route(project_id: str):
         titles = [title.strip() for title in request.form.getlist("titles") if title.strip()]
+        max_selected_titles = max(1, int(settings.workflow.max_selected_titles or ContentPipeline.MAX_SELECTED_TITLES))
         if not titles:
             flash("Please choose at least one title.")
             return redirect(url_for("index", project_id=project_id))
-        if len(titles) > ContentPipeline.MAX_SELECTED_TITLES:
-            flash(f"Please choose at most {ContentPipeline.MAX_SELECTED_TITLES} titles.")
+        if len(titles) > max_selected_titles:
+            flash(f"Please choose at most {max_selected_titles} titles.")
             return redirect(url_for("index", project_id=project_id))
         pipeline.build_package(project_id, titles)
+        return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/thumbnail-candidates")
+    def generate_thumbnail_candidates_route(project_id: str):
+        try:
+            pipeline.generate_thumbnail_candidates(project_id)
+            flash("Thumbnail candidates generated.")
+        except Exception as exc:
+            flash(str(exc))
+        return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/thumbnail-select")
+    def select_thumbnail_candidates_route(project_id: str):
+        candidate_ids = [
+            item.strip()
+            for item in request.form.getlist("thumbnail_candidates")
+            if isinstance(item, str) and item.strip()
+        ]
+        if not candidate_ids:
+            flash("Please choose at least one thumbnail candidate.")
+            return redirect(url_for("index", project_id=project_id))
+        try:
+            pipeline.select_thumbnail_candidates(project_id, candidate_ids)
+            flash("Thumbnail selection saved.")
+        except Exception as exc:
+            flash(str(exc))
         return redirect(url_for("index", project_id=project_id))
 
     @app.post("/projects/<project_id>/send-to-resolve")

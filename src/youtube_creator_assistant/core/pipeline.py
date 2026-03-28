@@ -15,6 +15,7 @@ from youtube_creator_assistant.features.audio.service import AudioPlanService
 from youtube_creator_assistant.features.descriptions.service import DescriptionService
 from youtube_creator_assistant.features.thumbnails.service import ThumbnailService
 from youtube_creator_assistant.features.titles.service import TitleAndThemeService
+from youtube_creator_assistant.providers.openai_client import OpenAIProvider
 from youtube_creator_assistant.providers.replicate import ReplicateProvider
 from youtube_creator_assistant.providers.resolve import ResolveProvider
 from youtube_creator_assistant.profiles.registry import get_profile_definition
@@ -27,12 +28,17 @@ class ContentPipeline:
         self.settings = settings
         self.runtime = RuntimeManager(settings)
         self.profile_definition = get_profile_definition(settings.profile.id)
-        self.title_service = TitleAndThemeService(settings)
+        self.openai_provider = OpenAIProvider()
+        self.title_service = TitleAndThemeService(settings, provider=self.openai_provider)
         self.audio_service = AudioPlanService(settings)
-        self.description_service = DescriptionService(settings)
-        self.thumbnail_service = ThumbnailService(settings)
-        self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
         self.replicate_provider = ReplicateProvider(settings)
+        self.description_service = DescriptionService(settings, provider=self.openai_provider)
+        self.thumbnail_service = ThumbnailService(
+            settings,
+            openai_provider=self.openai_provider,
+            replicate_provider=self.replicate_provider,
+        )
+        self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
         self.replicate_workflow_service = ReplicateWorkflowService(
             settings,
             replicate_provider=self.replicate_provider,
@@ -181,6 +187,22 @@ class ContentPipeline:
         plan.write_json(project.project_dir / "render_plan.json")
         return plan
 
+    def generate_thumbnail_candidates(self, project_id: str):
+        project = self.runtime.load_project(project_id)
+        candidates = self.thumbnail_service.generate_thumbnail_candidates(project)
+        self.runtime.save_project(project)
+        return project, candidates
+
+    def select_thumbnail_candidates(self, project_id: str, candidate_ids: str | Iterable[str]):
+        project = self.runtime.load_project(project_id)
+        if isinstance(candidate_ids, str):
+            cleaned_ids = [candidate_ids]
+        else:
+            cleaned_ids = list(candidate_ids)
+        project = self.thumbnail_service.select_thumbnail_candidates(project, cleaned_ids)
+        self.runtime.save_project(project)
+        return project
+
     def send_to_resolve(self, project_id: str):
         project = self.runtime.load_project(project_id)
         draft_plan = self.render_plan_builder.build_for_project(project)
@@ -273,4 +295,8 @@ class ContentPipeline:
             raw_titles = list(selected_titles)
         cleaned = [title.strip() for title in raw_titles if isinstance(title, str) and title.strip()]
         cleaned = dedupe_preserve_order(cleaned)
-        return cleaned[: self.MAX_SELECTED_TITLES]
+        max_selected_titles = max(
+            1,
+            int(getattr(self.settings.workflow, "max_selected_titles", self.MAX_SELECTED_TITLES) or self.MAX_SELECTED_TITLES),
+        )
+        return cleaned[:max_selected_titles]

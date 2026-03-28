@@ -23,6 +23,7 @@ workflow:
   allow_repeats: true
   use_title_reference_guidance: false
   selection_seed_mode: random
+  max_selected_titles: 1
   audio_extensions:
     - .wav
     - .mp3
@@ -31,17 +32,92 @@ thumbnail:
   max_bytes: 2097152
   target_bytes: 1800000
   suffix: "_yt"
+  candidate_generation_enabled: true
+  idea_count: 4
+  candidate_model: google/nano-banana-pro
+  candidate_resolution: 2K
+  candidate_aspect_ratio: "16:9"
+  candidate_output_format: jpg
+  candidate_safety_filter_level: block_only_high
+  candidate_allow_fallback_model: false
+  idea_prompt: |
+    You are designing YouTube fantasy thumbnail concepts for Enchanted Melodies.
+    Use the provided image and selected title.
+    Return STRICT JSON only in this format:
+    {"concepts":[{"candidate_id":"thumb01","label":"...","summary":"...","image_prompt":"..."},{"candidate_id":"thumb02","label":"...","summary":"...","image_prompt":"..."},{"candidate_id":"thumb03","label":"...","summary":"...","image_prompt":"..."},{"candidate_id":"thumb04","label":"...","summary":"...","image_prompt":"..."}]}
+
+    Rules:
+    - Return exactly 4 concepts.
+    - Each concept must integrate the full title into the image in a different creative way.
+    - Respect a premium medieval-fantasy YouTube thumbnail aesthetic.
+    - Keep the composition readable on YouTube.
+    - Do not destroy the original image; enhance it.
+    - Each summary must briefly explain the placement/material/style of the title integration.
+    - Each image_prompt must be ready for image editing on the provided image.
+    - In each image_prompt, explicitly preserve the original scene, character, architecture, and overall composition.
+    - In each image_prompt, explicitly request visible readable title typography integrated into the scene.
 
 openai:
   model: gpt-5.2-2025-12-11
   title_examples_input: |
-    Dream beside the moonlit lake / Enchanted night for quiet rest / Soft fantasy music for deep sleep / Starlit calm under the willow trees / Magical evening melodies for peace / Gentle fairytale ambience to unwind
+    Fantasy Music for Study & Relaxation — The Mage’s Terrace of Solace / Fantasy Music for Study & Relaxation — The White Mage’s Pilgrimage / Fantasy Music for Relaxation & Peace — The Guardian Watching Over the Realm / Fantasy Music for Focus & Relaxation — Where Kings Gaze, Kingdoms Rise
   devotional_examples_input: |
     Dream beside the moonlit lake / Enchanted night for quiet rest / Soft fantasy music for deep sleep / Starlit calm under the willow trees / Magical evening melodies for peace / Gentle fairytale ambience to unwind
+  title_generation:
+    count: 10
+    min_count: 10
+    use_visual_input: true
+    require_separator: true
+    separator: " — "
+    prompt_addendum: |
+      Match the example style closely.
+      The left side should sound like a polished fantasy music packaging line for study, focus, relaxation, peace, calm, or sleep.
+      The right side should describe a specific magical place, figure, journey, or moment inspired by the current image.
+      Keep every title elegant, evocative, and natural for a YouTube fantasy music upload.
+    rules:
+      - keep them relevant to the current image
+      - no emojis, no hashtags, no all caps
+      - use exactly one " — " separator per title
+      - keep the left side broad and reusable, and the right side image-specific
+      - avoid repeating the same right-side wording across the 10 titles
+  theme_generation:
+    count: 5
+    min_count: 5
+    use_visual_input: true
+    include_audio_context: false
+    prompt_addendum: |
+      Generate elegant fantasy themes from the chosen title and the visual only.
+      The themes should express the mood, world, and emotional direction of the video.
+      Keep them premium, evocative, and well suited for a fantasy music YouTube upload.
+    rules:
+      - 2 to 5 words each
+      - aligned with the chosen title
+      - aligned with the image
+      - fantasy-oriented, calm, immersive, and evocative
+      - no references to audio tracks or chapters
 
 description:
-  variant: vibespro_legacy
+  variant: enchanted_melodies_template
   audio_explanation_count: 5
+  dynamic_intro_include_audio_context: false
+  dynamic_intro_prompt: |
+    You are writing the unique presentation paragraph for an Enchanted Melodies YouTube description.
+    Write in polished ENGLISH only.
+    Use the provided image, selected title, and validated themes.
+    Return STRICT JSON only in this format:
+    {"unique_paragraph":"..."}
+
+    Rules:
+    - Write 3 to 5 elegant sentences.
+    - Present this specific video as unique.
+    - Clearly say it is inspired by the world suggested by the chosen title.
+    - Present the theme of the video as well as the title.
+    - Reflect the visual scene faithfully.
+    - Explain that the music and atmosphere of this video were carefully crafted in coherence with the visuals.
+    - The tone must feel refined, immersive, calm, premium, and very YouTube fantasy.
+    - Prefer wording similar to high-end fantasy music channels on YouTube.
+    - Aim for a cinematic, majestic, and deeply restful presentation.
+    - No hashtags, no bullet points, no CTA, no emojis, no quotation marks around the whole paragraph.
 
 replicate:
   enabled: false

@@ -25,6 +25,17 @@ class _FakeReplicateProvider:
 
 
 class ContentPipelineTests(unittest.TestCase):
+    def test_enchanted_selected_titles_are_limited_by_yaml(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")
+        pipeline = ContentPipeline(settings)
+
+        selected = pipeline._normalize_selected_titles(
+            ["First title", "Second title", "Third title"]
+        )
+
+        self.assertEqual(selected, ["First title"])
+
     def test_build_package_skips_reference_generation_when_disabled_in_config(self):
         root = Path(__file__).resolve().parents[1]
         settings = load_settings(root / "configs/profiles/enchanted_melodies.yaml")

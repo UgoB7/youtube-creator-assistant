@@ -55,8 +55,25 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings.workflow.include_gospel)
         self.assertFalse(settings.workflow.use_title_reference_guidance)
         self.assertEqual(settings.workflow.selection_seed_mode, "random")
+        self.assertEqual(settings.workflow.max_selected_titles, 1)
         self.assertEqual(settings.workflow.audio_extensions, [".wav", ".mp3"])
         self.assertEqual(settings.paths.psalms_dir.name, "faded")
+        self.assertEqual(settings.description.variant, "enchanted_melodies_template")
+        self.assertIn("Return STRICT JSON only", settings.description.dynamic_intro_prompt)
+        self.assertFalse(settings.description.dynamic_intro_include_audio_context)
+        self.assertEqual(settings.openai.title_generation.count, 10)
+        self.assertEqual(settings.openai.title_generation.min_count, 10)
+        self.assertTrue(settings.openai.title_generation.require_separator)
+        self.assertEqual(settings.openai.title_generation.separator, " — ")
+        self.assertFalse(settings.openai.theme_generation.include_audio_context)
+        self.assertEqual(settings.openai.theme_generation.count, 5)
+        self.assertTrue(settings.thumbnail.candidate_generation_enabled)
+        self.assertEqual(settings.thumbnail.idea_count, 4)
+        self.assertEqual(settings.thumbnail.candidate_model, "google/nano-banana-pro")
+        self.assertIn(
+            "Fantasy Music for Study & Relaxation — The Mage’s Terrace of Solace",
+            settings.openai.title_generation.examples_input,
+        )
 
 
 if __name__ == "__main__":

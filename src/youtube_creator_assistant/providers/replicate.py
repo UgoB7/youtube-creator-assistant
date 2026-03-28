@@ -58,6 +58,20 @@ class ReplicateProvider:
             output = self._run_with_retry(self.settings.replicate.video_model, payload)
         return self._output_bytes(output)
 
+    def generate_thumbnail_candidate_bytes(self, prompt: str, image_path: Path) -> bytes:
+        with image_path.open("rb") as image_file:
+            payload = {
+                "prompt": prompt,
+                "resolution": self.settings.thumbnail.candidate_resolution,
+                "image_input": [image_file],
+                "aspect_ratio": self.settings.thumbnail.candidate_aspect_ratio,
+                "output_format": self.settings.thumbnail.candidate_output_format,
+                "safety_filter_level": self.settings.thumbnail.candidate_safety_filter_level,
+                "allow_fallback_model": self.settings.thumbnail.candidate_allow_fallback_model,
+            }
+            output = self._run_with_retry(self.settings.thumbnail.candidate_model, payload)
+        return self._output_bytes(output)
+
     def client(self):
         if self._client is None:
             try:
