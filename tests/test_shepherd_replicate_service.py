@@ -2,6 +2,7 @@ import base64
 import json
 import threading
 import unittest
+import warnings
 from pathlib import Path
 
 from youtube_creator_assistant.core.config import load_settings
@@ -228,6 +229,37 @@ class ShepherdReplicateServiceTests(unittest.TestCase):
         self.assertEqual(len(batch.candidates), 20)
         self.assertCountEqual(replicate_provider.prompts, [f"Mercy Prompt {index}" for index in range(1, 21)])
         self.assertEqual(provider.client()._index, 4)
+
+    def test_mercy_prompt_generation_retries_incomplete_batch_with_warning(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/mercy.yaml")
+        settings.replicate.candidate_count = 5
+        settings.replicate.prompt_batch_size = 5
+        settings.replicate.prompt_parallel_requests = 1
+
+        outputs = [
+            json.dumps({"options": ["Mercy Prompt 1"]}),
+            json.dumps({"options": [f"Mercy Prompt {index}" for index in range(1, 6)]}),
+        ]
+        provider = _FakeOpenAIProvider(outputs)
+        replicate_provider = _FakeReplicateProvider()
+        service = ShepherdReplicateService(
+            settings,
+            openai_provider=provider,
+            replicate_provider=replicate_provider,
+        )
+
+        temp_root = root / "runtime" / "test-mercy-retry-candidates"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            batch = service.generate_candidate_batch(temp_root, count=5)
+
+        self.assertEqual(len(batch.candidates), 5)
+        self.assertEqual(replicate_provider.prompts, [f"Mercy Prompt {index}" for index in range(1, 6)])
+        self.assertEqual(provider.client()._index, 2)
+        self.assertTrue(caught)
+        self.assertIn("Retrying", str(caught[0].message))
 
     def test_debug_reuses_explicit_candidate_batch_without_regeneration(self):
         root = Path(__file__).resolve().parents[1]

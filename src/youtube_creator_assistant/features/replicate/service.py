@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import re
 import shutil
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -119,21 +120,33 @@ class ReplicateWorkflowService:
         slots: list[list[str] | None] = [None] * len(ordinal_batches)
 
         def _one_batch(batch_index: int, ordinals: list[int]) -> list[str]:
-            response = self.openai_provider.client().responses.create(
-                model=self.settings.openai.model,
-                input=self._build_visual_prompt_request(
-                    system_prompt=system_prompt,
-                    visual_prompt_parts=visual_prompt_parts,
-                    ordinals=ordinals,
-                    total=count,
-                ),
-            )
-            prompts = self._extract_visual_prompts(response.output_text or "", len(ordinals))
-            if len(prompts) < len(ordinals):
-                raise RuntimeError(
-                    f"OpenAI did not return enough visual prompts for batch {batch_index + 1}/{len(ordinal_batches)}."
+            max_attempts = self._prompt_batch_retry_attempts()
+            for attempt in range(1, max_attempts + 1):
+                response = self.openai_provider.client().responses.create(
+                    model=self.settings.openai.model,
+                    input=self._build_visual_prompt_request(
+                        system_prompt=system_prompt,
+                        visual_prompt_parts=visual_prompt_parts,
+                        ordinals=ordinals,
+                        total=count,
+                    ),
                 )
-            return prompts[: len(ordinals)]
+                prompts = self._extract_visual_prompts(response.output_text or "", len(ordinals))
+                if len(prompts) >= len(ordinals):
+                    return prompts[: len(ordinals)]
+                if attempt < max_attempts:
+                    self._warn_incomplete_prompt_batch(
+                        kind="visual",
+                        batch_index=batch_index,
+                        total_batches=len(ordinal_batches),
+                        expected=len(ordinals),
+                        received=len(prompts),
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                    )
+            raise RuntimeError(
+                f"OpenAI did not return enough visual prompts for batch {batch_index + 1}/{len(ordinal_batches)}."
+            )
 
         max_workers = self._resolve_prompt_parallel_requests(len(ordinal_batches))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -226,7 +239,8 @@ class ReplicateWorkflowService:
                 ordinal_start=ordinals[0],
                 total=count,
             )
-            for _ in range(2):
+            max_attempts = self._prompt_batch_retry_attempts()
+            for attempt in range(1, max_attempts + 1):
                 response = self.openai_provider.client().responses.create(
                     model=self.settings.openai.model,
                     input=[{"role": "user", "content": prompt}],
@@ -235,6 +249,16 @@ class ReplicateWorkflowService:
                 options = self._parse_prompt_options(raw, len(ordinals))
                 if len(options) >= len(ordinals):
                     return options[: len(ordinals)]
+                if attempt < max_attempts:
+                    self._warn_incomplete_prompt_batch(
+                        kind="image",
+                        batch_index=batch_index,
+                        total_batches=len(ordinal_batches),
+                        expected=len(ordinals),
+                        received=len(options),
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                    )
             raise RuntimeError(
                 f"OpenAI did not return enough image prompts for batch {batch_index + 1}/{len(ordinal_batches)}."
             )
@@ -527,6 +551,30 @@ class ReplicateWorkflowService:
     def _resolve_prompt_parallel_requests(self, batch_count: int) -> int:
         configured = int(self.settings.replicate.prompt_parallel_requests or 4)
         return max(1, min(batch_count, configured))
+
+    @staticmethod
+    def _prompt_batch_retry_attempts() -> int:
+        return 4
+
+    @staticmethod
+    def _warn_incomplete_prompt_batch(
+        *,
+        kind: str,
+        batch_index: int,
+        total_batches: int,
+        expected: int,
+        received: int,
+        attempt: int,
+        max_attempts: int,
+    ) -> None:
+        warnings.warn(
+            (
+                f"OpenAI returned only {received}/{expected} {kind} prompts for batch "
+                f"{batch_index + 1}/{total_batches}. Retrying ({attempt}/{max_attempts - 1})..."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     @staticmethod
     def _build_ordinal_batches(total: int, batch_size: int) -> list[list[int]]:
