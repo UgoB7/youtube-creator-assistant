@@ -167,6 +167,12 @@ PAGE = """<!doctype html>
             </video>
           {% endif %}
         {% endif %}
+        {% if settings.topaz.enabled and project.render_visual_asset and project.render_visual_asset.kind == "video" %}
+          <form method="post" action="{{ url_for('topaz_upscale_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+            <p class="muted">Optional: upscale the current render with Topaz before doing screen replacement.</p>
+            <button class="secondary" type="submit">Upscale render with Topaz</button>
+          </form>
+        {% endif %}
         {% if settings.screen_replace.enabled and project.render_visual_asset and project.render_visual_asset.kind == "video" %}
           <form method="post" action="{{ url_for('render_screen_replace_route', project_id=project.project_id) }}" style="margin-top: 12px;">
             <p class="muted">Optional: render a monitor/screen replacement pass onto the current video.</p>
@@ -608,6 +614,16 @@ def create_app(config_path: Path) -> Flask:
             quad_norm = (request.form.get("quad_norm") or "").strip()
             project = pipeline.render_screen_replacement(project_id, quad_norm=quad_norm or None)
             flash("Screen replacement render completed.")
+            return redirect(url_for("index", project_id=project.project_id))
+        except Exception as exc:
+            flash(str(exc))
+            return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/topaz-upscale")
+    def topaz_upscale_route(project_id: str):
+        try:
+            project = pipeline.upscale_project_render_video_with_topaz(project_id)
+            flash("Topaz upscale completed.")
             return redirect(url_for("index", project_id=project.project_id))
         except Exception as exc:
             flash(str(exc))

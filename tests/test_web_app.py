@@ -72,6 +72,23 @@ class _FakeScreenOverlayBuilderService:
         return Path(f"{self._output_path}.meta.json")
 
 
+class _FakeTopazProvider:
+    def upscale_video(self, source_path, output_path=None):
+        target = Path(output_path) if output_path is not None else Path(source_path).with_name(f"{Path(source_path).stem}_astra.mp4")
+        target.write_bytes(b"topaz-upscaled")
+        return type(
+            "_TopazResult",
+            (),
+            {
+                "request_id": "topaz-req-123",
+                "output_path": target,
+                "source_path": Path(source_path),
+                "model": "astra",
+                "status_payload": {"status": "complete", "download": {"url": "https://download.example/video.mp4"}},
+            },
+        )()
+
+
 class WebAppTests(unittest.TestCase):
     def test_vibes_requires_upload_when_candidate_generation_disabled(self):
         root = Path(__file__).resolve().parents[1]
@@ -322,6 +339,65 @@ class WebAppTests(unittest.TestCase):
                 page = client.get(f"/?project_id={project.project_id}")
                 self.assertIn(b"Render reusable overlay video", page.data)
                 self.assertIn(b"Reusable overlay preview", page.data)
+            finally:
+                if created_env:
+                    env_file.unlink(missing_ok=True)
+
+    def test_lofi_project_page_offers_topaz_upscale_before_screen_replace(self):
+        root = Path(__file__).resolve().parents[1]
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            runtime_root = temp_dir / "runtime"
+            env_file = root / ".env"
+            created_env = False
+            if not env_file.exists():
+                env_file.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+                created_env = True
+            try:
+                app = create_app(root / "configs/profiles/lofi.yaml")
+                app.config["TESTING"] = True
+                app.pipeline.settings.paths.runtime_root = runtime_root
+                app.pipeline.settings.paths.outputs_dir = runtime_root / "outputs"
+                app.pipeline.settings.paths.incoming_dir = runtime_root / "incoming"
+                app.pipeline.settings.paths.images_dir = runtime_root / "images"
+                app.pipeline.settings.paths.logs_dir = runtime_root / "logs"
+                app.pipeline.settings.paths.runtime_root.mkdir(parents=True, exist_ok=True)
+                app.pipeline.settings.paths.outputs_dir.mkdir(parents=True, exist_ok=True)
+                app.pipeline.settings.paths.incoming_dir.mkdir(parents=True, exist_ok=True)
+                app.pipeline.settings.paths.images_dir.mkdir(parents=True, exist_ok=True)
+                app.pipeline.settings.paths.logs_dir.mkdir(parents=True, exist_ok=True)
+                app.pipeline.topaz_provider = _FakeTopazProvider()
+
+                upload_path = temp_dir / "upload.png"
+                upload_path.write_bytes(_PNG_BYTES)
+                render_path = temp_dir / "render.mp4"
+                render_path.write_bytes(b"render")
+                project = app.pipeline.runtime.create_project_from_assets(
+                    upload_path,
+                    render_visual_source=render_path,
+                    render_visual_duration_seconds=12.0,
+                    render_visual_fps=24.0,
+                )
+
+                client = app.test_client()
+                page = client.get(f"/?project_id={project.project_id}")
+
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(b"Upscale render with Topaz", page.data)
+
+                response = client.post(
+                    f"/projects/{project.project_id}/topaz-upscale",
+                    follow_redirects=False,
+                )
+
+                self.assertEqual(response.status_code, 302)
+                updated_project = app.pipeline.runtime.load_project(project.project_id)
+                self.assertIsNotNone(updated_project.render_visual_asset)
+                assert updated_project.render_visual_asset is not None
+                self.assertEqual(updated_project.render_visual_asset.path.name, "render_visual_astra.mp4")
+                self.assertEqual(updated_project.render_visual_asset.path.read_bytes(), b"topaz-upscaled")
+                self.assertTrue((updated_project.project_dir / "topaz_upscale.json").exists())
             finally:
                 if created_env:
                     env_file.unlink(missing_ok=True)
