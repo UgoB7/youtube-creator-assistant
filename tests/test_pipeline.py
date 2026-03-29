@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from youtube_creator_assistant.core.config import load_settings
 from youtube_creator_assistant.core.models import AudioTrack, ChapterEntry
 from youtube_creator_assistant.core.pipeline import ContentPipeline
+from youtube_creator_assistant.providers.topaz import TopazVideoUpscaleResult
 
 
 _PNG_BYTES = base64.b64decode(
@@ -27,6 +28,50 @@ class _FakeReplicateProvider:
 class _FailingReplicateProvider:
     def generate_video_bytes(self, _image_path: Path) -> bytes:
         raise AssertionError("Replicate video generation should not be called when debug render reuse is enabled.")
+
+
+class _FakeScreenReplaceService:
+    def __init__(self):
+        self.calls: list[dict[str, object]] = []
+
+    def parse_quad_norm(self, raw: str):
+        cleaned = str(raw or "").strip()
+        self.calls.append({"kind": "parse", "raw": cleaned})
+        return [(0.43, 0.36), (0.74, 0.37), (0.42, 0.60), (0.73, 0.61)]
+
+    def serialize_quad_norm(self, points):
+        self.calls.append({"kind": "serialize", "points": list(points)})
+        return "0.4300,0.3600;0.7400,0.3700;0.4200,0.6000;0.7300,0.6100"
+
+    def render_video(self, *, base_video_path: Path, output_path: Path, quad_norm: str | None = None) -> Path:
+        self.calls.append(
+            {
+                "kind": "render",
+                "base_video_path": Path(base_video_path),
+                "output_path": Path(output_path),
+                "quad_norm": quad_norm,
+            }
+        )
+        output_path.write_bytes(f"screen-replace:{Path(base_video_path).name}".encode("utf-8"))
+        return output_path
+
+
+class _FakeTopazProvider:
+    def __init__(self, payload: bytes = b"topaz-video"):
+        self.payload = payload
+        self.calls: list[tuple[Path, Path | None]] = []
+
+    def upscale_video(self, source_path: Path, output_path: Path | None = None) -> TopazVideoUpscaleResult:
+        chosen_output = output_path or source_path.with_name(f"{source_path.stem}_astra.mp4")
+        chosen_output.write_bytes(self.payload)
+        self.calls.append((Path(source_path), Path(chosen_output)))
+        return TopazVideoUpscaleResult(
+            request_id="topaz-req-123",
+            output_path=Path(chosen_output),
+            source_path=Path(source_path),
+            model="astra",
+            status_payload={"status": "complete", "download": {"url": "https://download.example/video.mp4"}},
+        )
 
 
 class ContentPipelineTests(unittest.TestCase):
@@ -387,6 +432,110 @@ class ContentPipelineTests(unittest.TestCase):
             self.assertIsNotNone(project.render_visual_asset)
             assert project.render_visual_asset is not None
             self.assertEqual(project.render_visual_asset.path.read_bytes(), b"same-file-debug-video")
+
+    def test_render_screen_replacement_updates_project_and_reuses_original_render_video_on_repeat(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/shepherd.yaml")
+        settings.screen_replace.enabled = True
+        settings.screen_replace.overlay_video_path = root / "assets" / "screen_replace" / "test_overlay.mp4"
+        settings.screen_replace.output_filename = "render_visual_screen_replace.mp4"
+        settings.screen_replace.target_fps = 30
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "psalms"
+            settings.paths.gospel_dir = temp_dir / "assets" / "gospel"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            uploaded_image = temp_dir / "uploaded.png"
+            uploaded_image.write_bytes(_PNG_BYTES)
+            render_video = temp_dir / "render_source.mp4"
+            render_video.write_bytes(b"original-render-video")
+
+            pipeline = ContentPipeline(settings)
+            fake_screen_replace = _FakeScreenReplaceService()
+            pipeline.screen_replace_service = fake_screen_replace
+
+            project = pipeline.runtime.create_project_from_assets(
+                uploaded_image,
+                render_visual_source=render_video,
+                render_visual_duration_seconds=12.0,
+                render_visual_fps=24.0,
+            )
+
+            rendered = pipeline.render_screen_replacement(project.project_id)
+
+            self.assertIsNotNone(rendered.render_visual_asset)
+            assert rendered.render_visual_asset is not None
+            self.assertEqual(rendered.render_visual_asset.path.name, "render_visual_screen_replace.mp4")
+            self.assertEqual(rendered.render_visual_asset.fps, 30.0)
+            self.assertEqual(
+                rendered.render_visual_asset.path.read_bytes(),
+                b"screen-replace:render_visual.mp4",
+            )
+            self.assertTrue((rendered.project_dir / "screen_replace.json").exists())
+            self.assertEqual(
+                (rendered.project_dir / "screen_replace_quad_norm.txt").read_text(encoding="utf-8"),
+                "0.4300,0.3600;0.7400,0.3700;0.4200,0.6000;0.7300,0.6100",
+            )
+
+            rerendered = pipeline.render_screen_replacement(project.project_id, quad_norm="0.1,0.2;0.8,0.2;0.1,0.9;0.8,0.9")
+
+            self.assertIsNotNone(rerendered.render_visual_asset)
+            assert rerendered.render_visual_asset is not None
+            render_calls = [call for call in fake_screen_replace.calls if call.get("kind") == "render"]
+            self.assertEqual(len(render_calls), 2)
+            self.assertEqual(Path(render_calls[0]["base_video_path"]).name, "render_visual.mp4")
+            self.assertEqual(Path(render_calls[1]["base_video_path"]).name, "render_visual.mp4")
+
+    def test_topaz_upscale_project_render_video_updates_project_render_asset(self):
+        root = Path(__file__).resolve().parents[1]
+        settings = load_settings(root / "configs/profiles/lofi.yaml")
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            settings.paths.runtime_root = temp_dir / "runtime"
+            settings.paths.outputs_dir = settings.paths.runtime_root / "outputs"
+            settings.paths.incoming_dir = settings.paths.runtime_root / "incoming"
+            settings.paths.images_dir = settings.paths.runtime_root / "images"
+            settings.paths.logs_dir = settings.paths.runtime_root / "logs"
+            settings.paths.psalms_dir = temp_dir / "assets" / "psalms"
+            settings.paths.gospel_dir = temp_dir / "assets" / "gospel"
+            settings.paths.psalms_dir.mkdir(parents=True, exist_ok=True)
+            settings.paths.gospel_dir.mkdir(parents=True, exist_ok=True)
+
+            uploaded_video = temp_dir / "uploaded.mp4"
+            uploaded_video.write_bytes(b"source-video")
+            render_video = temp_dir / "render_visual.mp4"
+            render_video.write_bytes(b"render-video")
+
+            pipeline = ContentPipeline(settings)
+            fake_topaz = _FakeTopazProvider(payload=b"upscaled-video")
+            pipeline.topaz_provider = fake_topaz
+
+            project = pipeline.runtime.create_project_from_assets(
+                uploaded_video,
+                render_visual_source=render_video,
+                primary_visual_duration_seconds=12.0,
+                primary_visual_fps=24.0,
+                render_visual_duration_seconds=12.0,
+                render_visual_fps=24.0,
+            )
+
+            upscaled = pipeline.upscale_project_render_video_with_topaz(project.project_id)
+
+            self.assertEqual(fake_topaz.calls[0][0].name, "render_visual.mp4")
+            self.assertIsNotNone(upscaled.render_visual_asset)
+            assert upscaled.render_visual_asset is not None
+            self.assertEqual(upscaled.render_visual_asset.path.name, "render_visual_astra.mp4")
+            self.assertEqual(upscaled.render_visual_asset.path.read_bytes(), b"upscaled-video")
+            self.assertTrue((upscaled.project_dir / "topaz_upscale.json").exists())
 
 
 if __name__ == "__main__":

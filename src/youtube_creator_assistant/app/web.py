@@ -43,6 +43,13 @@ PAGE = """<!doctype html>
     ul { padding-left: 18px; }
     code { background: #f3f4f6; padding: 2px 6px; border-radius: 6px; }
     .project-link { display: block; margin-bottom: 8px; }
+    .screen-stage { position: relative; margin: 12px 0; aspect-ratio: 16 / 9; border-radius: 16px; overflow: hidden; background: #111827; border: 1px solid #d1d5db; }
+    .screen-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: 0; pointer-events: none; }
+    .screen-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+    .screen-quad-line { fill: rgba(107, 114, 128, 0.22); stroke: rgba(255, 255, 255, 0.56); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .screen-handle { position: absolute; width: 28px; height: 28px; border: none; background: transparent; color: transparent; font-size: 0; transform: translate(-50%, -50%); cursor: grab; user-select: none; touch-action: none; z-index: 3; }
+    .screen-handle::after { content: attr(data-handle-label); position: absolute; left: 12px; top: -2px; color: rgba(255,255,255,0.96); font-size: 11px; font-weight: 700; line-height: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.85); pointer-events: none; }
+    .screen-handle:active { cursor: grabbing; }
     @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -111,77 +118,108 @@ PAGE = """<!doctype html>
       </div>
     {% endif %}
 
-    <div class="grid">
-      <div class="card">
-        <h2>Projects</h2>
-        {% if projects %}
-          {% for item in projects %}
-            <a class="project-link" href="{{ url_for('project_detail', project_id=item.project_id) }}">
-              <strong>{{ item.project_id }}</strong> - {{ item.status }}
-            </a>
-          {% endfor %}
-        {% else %}
-          <p class="muted">No projects yet.</p>
-        {% endif %}
-      </div>
-
-      {% if project %}
-        <div class="card">
-          <h2>Current project</h2>
-          <p><strong>{{ project.project_id }}</strong></p>
-          <p class="muted">Status: {{ project.status }}</p>
-          {% if project.visual_asset.kind == "image" %}
-            <img src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}" alt="visual">
-          {% elif project.visual_asset.kind == "video" %}
-            <p class="muted">Visual preview (loop)</p>
-            <video controls loop autoplay muted playsinline preload="metadata">
-              <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}">
-            </video>
-          {% endif %}
-          {% if project.render_visual_asset and project.render_visual_asset.kind == "video" %}
-            <p class="muted" style="margin-top: 12px;">Render visual preview (loop)</p>
-            <video controls loop autoplay muted playsinline preload="metadata">
-              <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.render_visual_asset.path.name) }}">
-            </video>
-          {% endif %}
-          {% if settings.replicate.enabled and project.visual_asset.kind == "image" %}
-            <form method="post" action="{{ url_for('regenerate_render_video_route', project_id=project.project_id) }}" style="margin-top: 12px;">
-              <button class="secondary" type="submit">Regenerate video</button>
-            </form>
-          {% endif %}
-
-          <form method="post" action="{{ url_for('generate_titles_route', project_id=project.project_id) }}" style="margin-top: 12px;">
-            <button class="secondary" type="submit">Generate titles</button>
-          </form>
-
-          {% if project.title_candidates %}
-            <form method="post" action="{{ url_for('build_package_route', project_id=project.project_id) }}" style="margin-top: 16px;">
-              <h3>
-                {% if settings.workflow.max_selected_titles == 1 %}
-                  Choose the best title
-                {% else %}
-                  Choose up to {{ settings.workflow.max_selected_titles }} titles
-                {% endif %}
-              </h3>
-              {% for title in project.title_candidates %}
-                <div>
-                  <label>
-                    <input
-                      type="{% if settings.workflow.max_selected_titles == 1 %}radio{% else %}checkbox{% endif %}"
-                      name="titles"
-                      value="{{ title }}"
-                      {% if project.selected_titles and title in project.selected_titles %}checked{% elif not project.selected_titles and loop.index <= settings.workflow.max_selected_titles %}checked{% endif %}
-                    >
-                    {{ title }}
-                  </label>
-                </div>
-              {% endfor %}
-              <button type="submit" style="margin-top: 12px;">Build package</button>
-            </form>
-          {% endif %}
-        </div>
+    <div class="card">
+      <h2>Projects</h2>
+      {% if projects %}
+        {% for item in projects %}
+          <a class="project-link" href="{{ url_for('project_detail', project_id=item.project_id) }}">
+            <strong>{{ item.project_id }}</strong> - {{ item.status }}
+          </a>
+        {% endfor %}
+      {% else %}
+        <p class="muted">No projects yet.</p>
       {% endif %}
     </div>
+
+    {% if project %}
+      <div class="card">
+        <h2>Current project</h2>
+        <p><strong>{{ project.project_id }}</strong></p>
+        <p class="muted">Status: {{ project.status }}</p>
+        {% if project.visual_asset.kind == "image" %}
+          <img src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}" alt="visual">
+        {% elif project.visual_asset.kind == "video" %}
+          <p class="muted">Visual preview (loop)</p>
+          <video controls loop autoplay muted playsinline preload="metadata">
+            <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.visual_asset.path.name) }}">
+          </video>
+        {% endif %}
+        {% if project.render_visual_asset and project.render_visual_asset.kind == "video" %}
+          <p class="muted" style="margin-top: 12px;">Render visual preview (loop)</p>
+          <video controls loop autoplay muted playsinline preload="metadata">
+            <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.render_visual_asset.path.name) }}">
+          </video>
+        {% endif %}
+        {% if settings.replicate.enabled and project.visual_asset.kind == "image" %}
+          <form method="post" action="{{ url_for('regenerate_render_video_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+            <button class="secondary" type="submit">Regenerate video</button>
+          </form>
+        {% endif %}
+        {% if settings.screen_replace.overlay_builder.enabled %}
+          <form method="post" action="{{ url_for('render_screen_overlay_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+            <p class="muted">Reusable site-preview overlay video for screen replacement. Generate it once, then reuse it across renders.</p>
+            <button class="secondary" type="submit">Render reusable overlay video</button>
+          </form>
+          {% if screen_overlay_video_exists %}
+            <p class="muted" style="margin-top: 12px;">Reusable overlay preview</p>
+            <video controls loop autoplay muted playsinline preload="metadata">
+              <source src="{{ url_for('screen_overlay_file') }}">
+            </video>
+          {% endif %}
+        {% endif %}
+        {% if settings.screen_replace.enabled and project.render_visual_asset and project.render_visual_asset.kind == "video" %}
+          <form method="post" action="{{ url_for('render_screen_replace_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+            <p class="muted">Optional: render a monitor/screen replacement pass onto the current video.</p>
+            <div class="screen-stage" id="screenStage" data-default-quad="{{ settings.screen_replace.quad_norm }}">
+              <video id="screenStageVideo" autoplay muted loop playsinline preload="metadata">
+                <source src="{{ url_for('project_file', project_id=project.project_id, relpath='input/' + project.render_visual_asset.path.name) }}">
+              </video>
+              <svg viewBox="0 0 1920 1080" preserveAspectRatio="none">
+                <polygon id="screenQuadPolygon" class="screen-quad-line" points=""></polygon>
+              </svg>
+              <button type="button" class="screen-handle" data-handle-index="0" data-handle-label="1">1</button>
+              <button type="button" class="screen-handle" data-handle-index="1" data-handle-label="2">2</button>
+              <button type="button" class="screen-handle" data-handle-index="2" data-handle-label="3">3</button>
+              <button type="button" class="screen-handle" data-handle-index="3" data-handle-label="4">4</button>
+            </div>
+            <p class="muted">Editor order: 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left. The backend keeps the old LoFi render mapping automatically.</p>
+            <label class="muted" for="quad-norm-{{ project.project_id }}">Screen quad</label>
+            <input id="screenQuadNormInput" type="text" name="quad_norm" value="{{ screen_replace_quad_norm }}" style="width: 100%; margin: 8px 0 12px; padding: 10px; border: 1px solid #d1d5db; border-radius: 10px;">
+            <button class="secondary" type="submit">Render screen replacement</button>
+          </form>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('generate_titles_route', project_id=project.project_id) }}" style="margin-top: 12px;">
+          <button class="secondary" type="submit">Generate titles</button>
+        </form>
+
+        {% if project.title_candidates %}
+          <form method="post" action="{{ url_for('build_package_route', project_id=project.project_id) }}" style="margin-top: 16px;">
+            <h3>
+              {% if settings.workflow.max_selected_titles == 1 %}
+                Choose the best title
+              {% else %}
+                Choose up to {{ settings.workflow.max_selected_titles }} titles
+              {% endif %}
+            </h3>
+            {% for title in project.title_candidates %}
+              <div>
+                <label>
+                  <input
+                    type="{% if settings.workflow.max_selected_titles == 1 %}radio{% else %}checkbox{% endif %}"
+                    name="titles"
+                    value="{{ title }}"
+                    {% if project.selected_titles and title in project.selected_titles %}checked{% elif not project.selected_titles and loop.index <= settings.workflow.max_selected_titles %}checked{% endif %}
+                  >
+                  {{ title }}
+                </label>
+              </div>
+            {% endfor %}
+            <button type="submit" style="margin-top: 12px;">Build package</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
 
     {% if project and project.status in ["package_built", "resolve_synced"] %}
       <div class="card">
@@ -222,6 +260,15 @@ PAGE = """<!doctype html>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='audio_selection_debug.txt') }}">audio_selection_debug.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='selected_titles.txt') }}">selected_titles.txt</a></li>
           <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='render_plan.json') }}">render_plan.json</a></li>
+          {% if screen_overlay_video_exists %}
+            <li><a href="{{ url_for('screen_overlay_file') }}">screen_overlay_video</a></li>
+          {% endif %}
+          {% if screen_overlay_metadata_exists %}
+            <li><a href="{{ url_for('screen_overlay_metadata_file') }}">screen_overlay_video.meta.json</a></li>
+          {% endif %}
+          {% if project.render_visual_asset and project.render_visual_asset.path.name == settings.screen_replace.output_filename %}
+            <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='screen_replace.json') }}">screen_replace.json</a></li>
+          {% endif %}
           {% if project.resolve_last_synced_at %}
             <li><a href="{{ url_for('project_file', project_id=project.project_id, relpath='resolve_sync.json') }}">resolve_sync.json</a></li>
           {% endif %}
@@ -278,6 +325,100 @@ PAGE = """<!doctype html>
       const sync = () => card.classList.toggle("show-prompts", toggle.checked);
       toggle.addEventListener("change", sync);
       sync();
+    })();
+    (() => {
+      const screenStage = document.getElementById("screenStage");
+      const screenQuadPolygon = document.getElementById("screenQuadPolygon");
+      const screenQuadNormInput = document.getElementById("screenQuadNormInput");
+      const screenHandles = Array.from(document.querySelectorAll(".screen-handle"));
+      if (!screenStage || !screenQuadPolygon || !screenQuadNormInput || screenHandles.length !== 4) return;
+
+      const clamp01 = (value) => Math.max(0, Math.min(1, value));
+      const parseQuadText = (text) => {
+        const chunks = String(text || "").split(";").map((item) => item.trim()).filter(Boolean);
+        if (chunks.length !== 4) return [];
+        const points = [];
+        chunks.forEach((chunk) => {
+          const pair = chunk.split(",").map((item) => item.trim());
+          if (pair.length !== 2) return;
+          const x = Number.parseFloat(pair[0]);
+          const y = Number.parseFloat(pair[1]);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+          points.push({ x: clamp01(x), y: clamp01(y) });
+        });
+        return points.length === 4 ? points : [];
+      };
+      const parseQuad = (raw, fallbackRaw) => {
+        const first = parseQuadText(raw);
+        if (first.length === 4) return first;
+        const second = parseQuadText(fallbackRaw);
+        if (second.length === 4) return second;
+        return [
+          { x: 0.36, y: 0.30 },
+          { x: 0.64, y: 0.30 },
+          { x: 0.64, y: 0.70 },
+          { x: 0.36, y: 0.70 },
+        ];
+      };
+      const quadToString = (points) => {
+        return points.map((point) => `${point.x.toFixed(4)},${point.y.toFixed(4)}`).join(";");
+      };
+
+      let screenQuadPoints = parseQuad(screenQuadNormInput.value, screenStage.dataset.defaultQuad || "");
+      let draggingHandleIndex = null;
+
+      const syncScreenQuadUI = () => {
+        if (!Array.isArray(screenQuadPoints) || screenQuadPoints.length !== 4) return;
+        screenQuadNormInput.value = quadToString(screenQuadPoints);
+        const polygonPoints = screenQuadPoints
+          .map((point) => `${(point.x * 1920).toFixed(1)},${(point.y * 1080).toFixed(1)}`)
+          .join(" ");
+        screenQuadPolygon.setAttribute("points", polygonPoints);
+        screenHandles.forEach((handle, index) => {
+          const point = screenQuadPoints[index];
+          if (!point) return;
+          handle.style.left = `${(point.x * 100).toFixed(2)}%`;
+          handle.style.top = `${(point.y * 100).toFixed(2)}%`;
+        });
+      };
+
+      const setHandlePositionFromEvent = (event) => {
+        if (draggingHandleIndex === null) return;
+        const rect = screenStage.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const x = clamp01((event.clientX - rect.left) / rect.width);
+        const y = clamp01((event.clientY - rect.top) / rect.height);
+        const points = [...screenQuadPoints];
+        points[draggingHandleIndex] = { x, y };
+        screenQuadPoints = points;
+        syncScreenQuadUI();
+      };
+
+      screenHandles.forEach((handle) => {
+        handle.addEventListener("pointerdown", (event) => {
+          const idx = Number.parseInt(handle.dataset.handleIndex || "", 10);
+          if (!Number.isInteger(idx)) return;
+          event.preventDefault();
+          draggingHandleIndex = idx;
+          handle.setPointerCapture?.(event.pointerId);
+        });
+      });
+      window.addEventListener("pointermove", (event) => {
+        if (draggingHandleIndex === null) return;
+        setHandlePositionFromEvent(event);
+      });
+      window.addEventListener("pointerup", () => {
+        draggingHandleIndex = null;
+      });
+      window.addEventListener("pointercancel", () => {
+        draggingHandleIndex = null;
+      });
+      screenQuadNormInput.addEventListener("change", () => {
+        screenQuadPoints = parseQuad(screenQuadNormInput.value, screenStage.dataset.defaultQuad || "");
+        syncScreenQuadUI();
+      });
+      window.addEventListener("resize", syncScreenQuadUI);
+      syncScreenQuadUI();
     })();
   </script>
 </body>
@@ -378,6 +519,16 @@ def create_app(config_path: Path) -> Flask:
         project = _get_project(current_id)
         thumbnail_candidates = _get_thumbnail_candidates(project)
         selected_thumbnail_candidates = _get_selected_thumbnail_candidates(project)
+        screen_replace_quad_norm = pipeline.get_screen_replace_quad_norm(current_id) if project is not None else settings.screen_replace.quad_norm
+        screen_overlay_video_exists = False
+        screen_overlay_metadata_exists = False
+        if settings.screen_replace.overlay_builder.enabled:
+            try:
+                screen_overlay_video_exists = pipeline.screen_overlay_builder_service.output_video_path().exists()
+                screen_overlay_metadata_exists = pipeline.screen_overlay_builder_service.metadata_path().exists()
+            except Exception:
+                screen_overlay_video_exists = False
+                screen_overlay_metadata_exists = False
         return render_template_string(
             PAGE,
             settings=settings,
@@ -387,6 +538,9 @@ def create_app(config_path: Path) -> Flask:
             thumbnail_candidates=thumbnail_candidates,
             selected_thumbnail_candidates=selected_thumbnail_candidates,
             selected_thumbnail_candidate_ids={str(item.get("candidate_id")) for item in selected_thumbnail_candidates},
+            screen_replace_quad_norm=screen_replace_quad_norm,
+            screen_overlay_video_exists=screen_overlay_video_exists,
+            screen_overlay_metadata_exists=screen_overlay_metadata_exists,
             accept_attr=accept_attr,
         )
 
@@ -447,6 +601,26 @@ def create_app(config_path: Path) -> Flask:
         except Exception as exc:
             flash(str(exc))
             return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/screen-replace")
+    def render_screen_replace_route(project_id: str):
+        try:
+            quad_norm = (request.form.get("quad_norm") or "").strip()
+            project = pipeline.render_screen_replacement(project_id, quad_norm=quad_norm or None)
+            flash("Screen replacement render completed.")
+            return redirect(url_for("index", project_id=project.project_id))
+        except Exception as exc:
+            flash(str(exc))
+            return redirect(url_for("index", project_id=project_id))
+
+    @app.post("/projects/<project_id>/render-screen-overlay")
+    def render_screen_overlay_route(project_id: str):
+        try:
+            pipeline.render_screen_overlay_video()
+            flash("Reusable screen overlay video rendered.")
+        except Exception as exc:
+            flash(str(exc))
+        return redirect(url_for("index", project_id=project_id))
 
     @app.post("/projects/<project_id>/build")
     def build_package_route(project_id: str):
@@ -518,6 +692,26 @@ def create_app(config_path: Path) -> Flask:
             abort(404)
         target = (batch.batch_dir / filename).resolve()
         if batch.batch_dir.resolve() not in target.parents and target != batch.batch_dir.resolve():
+            abort(404)
+        if not target.exists() or not target.is_file():
+            abort(404)
+        return send_from_directory(target.parent, target.name)
+
+    @app.get("/screen-overlay/file")
+    def screen_overlay_file():
+        try:
+            target = pipeline.screen_overlay_builder_service.output_video_path()
+        except Exception:
+            abort(404)
+        if not target.exists() or not target.is_file():
+            abort(404)
+        return send_from_directory(target.parent, target.name)
+
+    @app.get("/screen-overlay/meta")
+    def screen_overlay_metadata_file():
+        try:
+            target = pipeline.screen_overlay_builder_service.metadata_path()
+        except Exception:
             abort(404)
         if not target.exists() or not target.is_file():
             abort(404)

@@ -1,0 +1,24 @@
+{
+  "durationSeconds": 12,
+  "fps": 30,
+  "width": 3840,
+  "height": 2160,
+  "text": {
+    "title": "Worship in the Night | Deep Focus Mix",
+    "channel": "LoFi Jesus",
+    "subscribers": "124K subscribers",
+    "cta": "Subscribe to LoFi Jesus",
+    "views": "1.2M views",
+    "meta": "2 hours ago",
+    "comments": [
+      "Peace over your home tonight.",
+      "This keeps my prayer time focused.",
+      "Praying for everyone listening.",
+      "Grace and calm in this room."
+    ]
+  },
+  "theme": {
+    "accent": "#ff3d45",
+    "mutedText": "#9ca8c3"
+  }
+}

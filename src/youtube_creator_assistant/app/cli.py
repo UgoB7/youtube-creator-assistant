@@ -24,6 +24,24 @@ def main() -> None:
     build_parser.add_argument("--project-id", required=True)
     build_parser.add_argument("--title", action="append", required=True)
 
+    overlay_parser = subparsers.add_parser(
+        "render-screen-overlay",
+        help="Render the reusable screen overlay video from the local Remotion project.",
+    )
+    overlay_parser.add_argument("--config", type=Path, required=True)
+    overlay_parser.add_argument("--install", action="store_true")
+    overlay_parser.add_argument("--debug", action="store_true")
+
+    topaz_parser = subparsers.add_parser(
+        "topaz-upscale",
+        help="Upscale a local video or a project render using the Topaz Video API.",
+    )
+    topaz_parser.add_argument("--config", type=Path, required=True)
+    topaz_source = topaz_parser.add_mutually_exclusive_group(required=True)
+    topaz_source.add_argument("--video", type=Path)
+    topaz_source.add_argument("--project-id")
+    topaz_parser.add_argument("--output", type=Path)
+
     run_parser = subparsers.add_parser("run", help="Convenience flow: create project and generate titles.")
     run_parser.add_argument("--config", type=Path, required=True)
     run_parser.add_argument("--visual", type=Path, required=True)
@@ -49,6 +67,27 @@ def main() -> None:
     if args.command == "build-package":
         project = pipeline.build_package(args.project_id, args.title)
         print(project.project_dir)
+        return
+
+    if args.command == "render-screen-overlay":
+        output_path = pipeline.render_screen_overlay_video(
+            install=bool(args.install),
+            debug=bool(args.debug),
+        )
+        print(output_path)
+        print(pipeline.screen_overlay_builder_service.metadata_path())
+        return
+
+    if args.command == "topaz-upscale":
+        if args.video is not None:
+            result = pipeline.upscale_video_with_topaz(args.video, output_path=args.output)
+            print(result.output_path)
+            print(result.request_id)
+            return
+        project = pipeline.upscale_project_render_video_with_topaz(args.project_id, output_path=args.output)
+        print(project.project_dir)
+        if project.render_visual_asset is not None:
+            print(project.render_visual_asset.path)
         return
 
     if args.command == "run":

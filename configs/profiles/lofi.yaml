@@ -104,10 +104,49 @@ replicate:
     reuse_render_video: true
     render_video_path: ../../runtime/lofi/incoming/replicate_generated/lofi-candidates-20260328-061400/candidate-04_render.mp4
 
+topaz:
+  enabled: true
+  api_key_env: TOPAZ_API_KEY
+  model: astra
+  upscale_factor: 2.0
+  poll_interval_seconds: 20
+  timeout_seconds: 14400
+  output_suffix: _astra
+  output_container: mp4
+  verify_supported_model: true
+  filter_params: {}
+  output_overrides:
+    audioTransfer: Copy
+    audioCodec: AAC
+    videoEncoder: H265
+    container: mp4
+
 web:
   host: 127.0.0.1
   port: 5003
   debug: true
+
+screen_replace:
+  enabled: true
+  overlay_video_path: ../../assets/screen_replace/lofi_overlay.local.mp4
+  quad_norm: "0.43,0.36;0.74,0.37;0.73,0.61;0.42,0.60"
+  target_width: 3840
+  target_height: 2160
+  target_fps: 30
+  output_filename: render_visual_screen_replace.mp4
+  overlay_builder:
+    enabled: true
+    project_dir: ../../screen_overlay
+    source_assets_dir: ../../assets/screen_replace/source
+    output_video_path: ../../assets/screen_replace/lofi_overlay.local.mp4
+    browser_executable_path: /Applications/Chromium.app/Contents/MacOS/Chromium
+    props_filename: screen_overlay_props.local.json
+    entry_file: src/index.jsx
+    composition_id: Overlay4K
+    width: 3840
+    height: 2160
+    fps: 30
+    duration_seconds: 12
 
 render:
   enabled: true

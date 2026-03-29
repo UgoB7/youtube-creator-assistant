@@ -18,3 +18,11 @@ configs/local/**
 !configs/local/
 !configs/local/**/
 !configs/local/**/.gitkeep
+screen_overlay/node_modules*/
+screen_overlay/.cache/
+screen_overlay/.remotion/
+screen_overlay/out/
+screen_overlay/*.log
+screen_overlay/public/ecran/**
+!screen_overlay/public/ecran/
+!screen_overlay/public/ecran/.gitkeep

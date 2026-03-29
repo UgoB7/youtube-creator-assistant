@@ -9,9 +9,11 @@ from typing import Iterable
 from youtube_creator_assistant.core.config import Settings
 from youtube_creator_assistant.core.models import ReplicateImageBatch
 from youtube_creator_assistant.features.replicate.service import ReplicateWorkflowService
+from youtube_creator_assistant.features.screen_replace.overlay_builder import ScreenOverlayBuilderService
+from youtube_creator_assistant.features.screen_replace.service import ScreenReplaceService
 from youtube_creator_assistant.features.render.builder import RenderPlanBuilder
 from youtube_creator_assistant.core.runtime import RuntimeManager
-from youtube_creator_assistant.core.utils import dedupe_preserve_order
+from youtube_creator_assistant.core.utils import dedupe_preserve_order, probe_video_metadata
 from youtube_creator_assistant.features.audio.service import AudioPlanService
 from youtube_creator_assistant.features.descriptions.service import DescriptionService
 from youtube_creator_assistant.features.thumbnails.service import ThumbnailService
@@ -19,6 +21,7 @@ from youtube_creator_assistant.features.titles.service import TitleAndThemeServi
 from youtube_creator_assistant.providers.openai_client import OpenAIProvider
 from youtube_creator_assistant.providers.replicate import ReplicateProvider
 from youtube_creator_assistant.providers.resolve import ResolveProvider
+from youtube_creator_assistant.providers.topaz import TopazVideoProvider, TopazVideoUpscaleResult
 from youtube_creator_assistant.profiles.registry import get_profile_definition
 
 
@@ -39,12 +42,15 @@ class ContentPipeline:
             openai_provider=self.openai_provider,
             replicate_provider=self.replicate_provider,
         )
+        self.screen_replace_service = ScreenReplaceService(settings)
+        self.screen_overlay_builder_service = ScreenOverlayBuilderService(settings)
         self.render_plan_builder = RenderPlanBuilder(settings, self.runtime)
         self.replicate_workflow_service = ReplicateWorkflowService(
             settings,
             replicate_provider=self.replicate_provider,
         )
         self.resolve_provider = ResolveProvider(settings)
+        self.topaz_provider = TopazVideoProvider(settings)
 
     def create_project(self, visual_source: str | Path):
         source_path = Path(visual_source).expanduser().resolve()
@@ -224,6 +230,133 @@ class ContentPipeline:
     def create_project_from_shepherd_candidate(self, batch_id: str, candidate_id: str):
         return self.create_project_from_candidate(batch_id, candidate_id)
 
+    def get_screen_replace_quad_norm(self, project_id: str) -> str:
+        project = self.runtime.load_project(project_id)
+        quad_path = project.project_dir / "screen_replace_quad_norm.txt"
+        if quad_path.exists():
+            return quad_path.read_text(encoding="utf-8").strip()
+        return self.settings.screen_replace.quad_norm
+
+    def render_screen_overlay_video(
+        self,
+        *,
+        install: bool = False,
+        debug: bool = False,
+    ) -> Path:
+        return self.screen_overlay_builder_service.render_overlay_video(install=install, debug=debug)
+
+    def upscale_video_with_topaz(
+        self,
+        video_source: str | Path,
+        *,
+        output_path: str | Path | None = None,
+    ) -> TopazVideoUpscaleResult:
+        source_path = Path(video_source).expanduser().resolve()
+        target_path = Path(output_path).expanduser().resolve() if output_path else None
+        return self.topaz_provider.upscale_video(source_path, output_path=target_path)
+
+    def upscale_project_render_video_with_topaz(
+        self,
+        project_id: str,
+        *,
+        output_path: str | Path | None = None,
+    ):
+        project = self.runtime.load_project(project_id)
+        source_asset = (
+            project.render_visual_asset
+            if project.render_visual_asset is not None and project.render_visual_asset.kind == "video"
+            else project.visual_asset
+        )
+        if source_asset.kind != "video":
+            raise RuntimeError("Topaz upscale requires a video render or a video-based project.")
+
+        chosen_output = Path(output_path).expanduser().resolve() if output_path else None
+        result = self.topaz_provider.upscale_video(source_asset.path, output_path=chosen_output)
+        duration_seconds, fps = probe_video_metadata(result.output_path)
+
+        project.render_visual_asset = project.render_visual_asset or source_asset.__class__(
+            kind="video",
+            path=result.output_path,
+            original_name=result.output_path.name,
+        )
+        project.render_visual_asset.kind = "video"
+        project.render_visual_asset.path = result.output_path
+        project.render_visual_asset.original_name = result.output_path.name
+        project.render_visual_asset.duration_seconds = duration_seconds
+        project.render_visual_asset.fps = fps
+        project.resolve_last_synced_at = None
+        project.resolve_last_error = None
+        if project.status == "resolve_synced":
+            project.status = "package_built"
+
+        (project.project_dir / "topaz_upscale.json").write_text(
+            json.dumps(
+                {
+                    "request_id": result.request_id,
+                    "model": result.model,
+                    "source_path": str(result.source_path),
+                    "output_path": str(result.output_path),
+                    "status": result.status_payload.get("status"),
+                    "download": result.status_payload.get("download"),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.runtime.save_project(project)
+        return project
+
+    def render_screen_replacement(self, project_id: str, quad_norm: str | None = None):
+        project = self.runtime.load_project(project_id)
+        if not self.settings.screen_replace.enabled:
+            raise RuntimeError("Screen replacement is disabled for this profile.")
+        if project.render_visual_asset is None or project.render_visual_asset.kind != "video":
+            raise RuntimeError("Generate or select a render video before running screen replacement.")
+
+        input_dir = project.project_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = (self.settings.screen_replace.output_filename or "render_visual_screen_replace.mp4").strip()
+        output_path = input_dir / output_filename
+        chosen_quad_norm = self.screen_replace_service.serialize_quad_norm(
+            self.screen_replace_service.parse_quad_norm(quad_norm or self.get_screen_replace_quad_norm(project_id))
+        )
+        base_video_path = self._screen_replace_base_video_path(project)
+        self.screen_replace_service.render_video(
+            base_video_path=base_video_path,
+            output_path=output_path,
+            quad_norm=chosen_quad_norm,
+        )
+
+        (project.project_dir / "screen_replace_quad_norm.txt").write_text(chosen_quad_norm, encoding="utf-8")
+        (project.project_dir / "screen_replace.json").write_text(
+            json.dumps(
+                {
+                    "output_filename": output_filename,
+                    "overlay_video_path": str(self.settings.screen_replace.overlay_video_path),
+                    "quad_norm": chosen_quad_norm,
+                    "target_width": int(self.settings.screen_replace.target_width),
+                    "target_height": int(self.settings.screen_replace.target_height),
+                    "target_fps": int(self.settings.screen_replace.target_fps),
+                    "rendered_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        project.render_visual_asset.path = output_path
+        project.render_visual_asset.original_name = output_filename
+        project.render_visual_asset.kind = "video"
+        if project.render_visual_asset.duration_seconds is None and project.visual_asset.duration_seconds is not None:
+            project.render_visual_asset.duration_seconds = project.visual_asset.duration_seconds
+        project.render_visual_asset.fps = float(self.settings.screen_replace.target_fps)
+        project.resolve_last_synced_at = None
+        project.resolve_last_error = None
+        if project.status == "resolve_synced":
+            project.status = "package_built"
+        self.runtime.save_project(project)
+        return project
+
     def generate_titles(self, project_id: str):
         project = self.runtime.load_project(project_id)
         project.title_candidates = self.title_service.generate_titles(project.visual_asset, project.project_dir)
@@ -358,3 +491,13 @@ class ContentPipeline:
     def _sync_replicate_workflow_dependencies(self) -> None:
         self.replicate_workflow_service.replicate_provider = self.replicate_provider
         self.replicate_workflow_service.openai_provider = self.openai_provider
+
+    def _screen_replace_base_video_path(self, project) -> Path:
+        current_render_path = project.render_visual_asset.path.expanduser().resolve()
+        output_filename = (self.settings.screen_replace.output_filename or "render_visual_screen_replace.mp4").strip()
+        if current_render_path.name != output_filename:
+            return current_render_path
+        original_render_path = project.project_dir / "input" / "render_visual.mp4"
+        if original_render_path.exists():
+            return original_render_path
+        return current_render_path

@@ -312,6 +312,47 @@ class ReplicateSettings:
 
 
 @dataclass
+class TopazSettings:
+    enabled: bool = False
+    api_base_url: str = "https://api.topazlabs.com"
+    api_key_env: str = "TOPAZ_API_KEY"
+    model: str = "astra"
+    upscale_factor: float = 2.0
+    poll_interval_seconds: float = 20.0
+    timeout_seconds: float = 14400.0
+    output_suffix: str = "_topaz"
+    output_container: str = "mp4"
+    verify_supported_model: bool = True
+    filter_params: Dict[str, Any] = field(default_factory=dict)
+    output_overrides: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "audioTransfer": "Copy",
+            "audioCodec": "AAC",
+            "videoEncoder": "H265",
+            "container": "mp4",
+        }
+    )
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "TopazSettings":
+        payload = dict(data or {})
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            api_base_url=str(payload.get("api_base_url", "https://api.topazlabs.com")).rstrip("/"),
+            api_key_env=str(payload.get("api_key_env", "TOPAZ_API_KEY")),
+            model=str(payload.get("model", "astra")),
+            upscale_factor=float(payload.get("upscale_factor", 2.0)),
+            poll_interval_seconds=float(payload.get("poll_interval_seconds", 20.0)),
+            timeout_seconds=float(payload.get("timeout_seconds", 14400.0)),
+            output_suffix=str(payload.get("output_suffix", "_topaz")),
+            output_container=str(payload.get("output_container", "mp4")),
+            verify_supported_model=bool(payload.get("verify_supported_model", True)),
+            filter_params=dict(payload.get("filter_params") or {}),
+            output_overrides=dict(payload.get("output_overrides") or cls().output_overrides),
+        )
+
+
+@dataclass
 class WebSettings:
     host: str = "127.0.0.1"
     port: int = 5000
@@ -340,6 +381,85 @@ class RenderSettings:
 
 
 @dataclass
+class ScreenOverlayBuilderSettings:
+    enabled: bool = False
+    project_dir: Optional[Path] = None
+    source_assets_dir: Optional[Path] = None
+    output_video_path: Optional[Path] = None
+    browser_executable_path: Optional[Path] = None
+    props_filename: str = "screen_overlay_props.local.json"
+    entry_file: str = "src/index.jsx"
+    composition_id: str = "Overlay4K"
+    width: Optional[int] = None
+    height: Optional[int] = None
+    fps: Optional[int] = None
+    duration_seconds: Optional[float] = None
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Optional[Dict[str, Any]],
+        *,
+        base_dir: Path,
+    ) -> "ScreenOverlayBuilderSettings":
+        payload = dict(data or {})
+        project_dir = payload.get("project_dir")
+        source_assets_dir = payload.get("source_assets_dir")
+        output_video_path = payload.get("output_video_path")
+        browser_executable_path = payload.get("browser_executable_path")
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            project_dir=_expand_path(project_dir, base_dir) if project_dir else None,
+            source_assets_dir=_expand_path(source_assets_dir, base_dir) if source_assets_dir else None,
+            output_video_path=_expand_path(output_video_path, base_dir) if output_video_path else None,
+            browser_executable_path=(
+                _expand_path(browser_executable_path, base_dir) if browser_executable_path else None
+            ),
+            props_filename=str(payload.get("props_filename", "screen_overlay_props.local.json")),
+            entry_file=str(payload.get("entry_file", "src/index.jsx")),
+            composition_id=str(payload.get("composition_id", "Overlay4K")),
+            width=int(payload["width"]) if payload.get("width") is not None else None,
+            height=int(payload["height"]) if payload.get("height") is not None else None,
+            fps=int(payload["fps"]) if payload.get("fps") is not None else None,
+            duration_seconds=(
+                float(payload["duration_seconds"]) if payload.get("duration_seconds") is not None else None
+            ),
+        )
+
+
+@dataclass
+class ScreenReplaceSettings:
+    enabled: bool = False
+    overlay_video_path: Optional[Path] = None
+    quad_norm: str = "0.36,0.30;0.64,0.30;0.36,0.70;0.64,0.70"
+    target_width: int = 3840
+    target_height: int = 2160
+    target_fps: int = 30
+    output_filename: str = "render_visual_screen_replace.mp4"
+    overlay_builder: ScreenOverlayBuilderSettings = field(default_factory=ScreenOverlayBuilderSettings)
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Optional[Dict[str, Any]],
+        *,
+        base_dir: Path,
+    ) -> "ScreenReplaceSettings":
+        payload = dict(data or {})
+        overlay_video_path = payload.get("overlay_video_path")
+        return cls(
+            enabled=bool(payload.get("enabled", False)),
+            overlay_video_path=_expand_path(overlay_video_path, base_dir) if overlay_video_path else None,
+            quad_norm=str(payload.get("quad_norm", "0.36,0.30;0.64,0.30;0.36,0.70;0.64,0.70")),
+            target_width=int(payload.get("target_width", 3840)),
+            target_height=int(payload.get("target_height", 2160)),
+            target_fps=int(payload.get("target_fps", 30)),
+            output_filename=str(payload.get("output_filename", "render_visual_screen_replace.mp4")),
+            overlay_builder=ScreenOverlayBuilderSettings.from_dict(payload.get("overlay_builder"), base_dir=base_dir),
+        )
+
+
+@dataclass
 class Settings:
     config_path: Path
     profile: ProfileSettings
@@ -349,8 +469,10 @@ class Settings:
     openai: OpenAISettings = field(default_factory=OpenAISettings)
     description: DescriptionSettings = field(default_factory=DescriptionSettings)
     replicate: ReplicateSettings = field(default_factory=ReplicateSettings)
+    topaz: TopazSettings = field(default_factory=TopazSettings)
     web: WebSettings = field(default_factory=WebSettings)
     render: RenderSettings = field(default_factory=RenderSettings)
+    screen_replace: ScreenReplaceSettings = field(default_factory=ScreenReplaceSettings)
 
 
 def load_settings(config_path: str | Path) -> Settings:
@@ -366,8 +488,10 @@ def load_settings(config_path: str | Path) -> Settings:
     openai_data: Dict[str, Any] = data.get("openai", {})
     description_data: Dict[str, Any] = data.get("description", {})
     replicate_data: Dict[str, Any] = data.get("replicate", {})
+    topaz_data: Dict[str, Any] = data.get("topaz", {})
     web_data: Dict[str, Any] = data.get("web", {})
     render_data: Dict[str, Any] = data.get("render", {})
+    screen_replace_data: Dict[str, Any] = data.get("screen_replace", {})
     if "render_dir" in render_data:
         render_data = {
             **render_data,
@@ -395,6 +519,8 @@ def load_settings(config_path: str | Path) -> Settings:
         openai=OpenAISettings.from_dict(openai_data),
         description=DescriptionSettings(**description_data),
         replicate=ReplicateSettings.from_dict(replicate_data, base_dir=base_dir),
+        topaz=TopazSettings.from_dict(topaz_data),
         web=WebSettings(**web_data),
         render=RenderSettings(**render_data),
+        screen_replace=ScreenReplaceSettings.from_dict(screen_replace_data, base_dir=base_dir),
     )
